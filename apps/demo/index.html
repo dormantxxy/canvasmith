@@ -13,17 +13,20 @@
      signature warm-orange accent) — mapped onto canvasmith's own (shorter) variable names rather
      than renamed wholesale, so every rule below keeps working unchanged. */
   :root[data-mode="dark"], :root {
-    --bg:#0b0b0d; --panel:#141417; --panel-2:#1b1b20; --line:rgba(255,255,255,.07); --line-soft:rgba(255,255,255,.05);
-    --ink:#f5f3ee; --dim:#aeaca4; --dim-2:#76746d; --accent:#ef6a2d; --accent-ink:#ffffff;
-    --stage:#0a0a0c; --danger:#f87171;
+    --bg:#1e1e1e; --panel:#262626; --panel-2:#2f2f2f; --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.07);
+    --ink:#e8e8e6; --dim:#c3c3c0; --dim-2:#918f8c; --accent:#4f8ff0; --accent-ink:#ffffff;
+    --stage:#1a1a1a; --danger:#f87171;
     --shadow-sm:0 1px 0 rgba(255,255,255,.03) inset, 0 4px 12px rgba(0,0,0,.35); --shadow-md:0 8px 24px rgba(0,0,0,.4); --shadow-lg:0 24px 60px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.04) inset;
     --ring: 0 0 0 1px var(--bg), 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent);
   }
   :root[data-mode="light"] {
-    --bg:#f3efe7; --panel:#ffffff; --panel-2:#f5f1ea; --line:rgba(30,26,18,.09); --line-soft:rgba(30,26,18,.06);
-    --ink:#1c1913; --dim:#5e594f; --dim-2:#8c867a; --accent:#c85a24; --accent-ink:#ffffff;
-    --stage:#ece7dd; --danger:#c73434;
-    --shadow-sm:0 1px 2px rgba(40,34,22,.05); --shadow-md:0 8px 22px rgba(40,34,22,.07); --shadow-lg:0 24px 60px rgba(40,34,22,.18), 0 1px 0 rgba(255,255,255,.6) inset;
+    /* Soft warm paper, not stark white — panel is a gentle off-white tinted to match bg's warmth
+       (was pure #ffffff sitting directly against a beige page, which read as glare) and bg/stage
+       are a touch deeper so the whole surface stack sits lower in brightness. */
+    --bg:#ece6d9; --panel:#faf7f0; --panel-2:#f1ebdd; --line:rgba(30,26,18,.11); --line-soft:rgba(30,26,18,.07);
+    --ink:#26221c; --dim:#5e594f; --dim-2:#8c867a; --accent:#2f6fdb; --accent-ink:#ffffff;
+    --stage:#e4ddcc; --danger:#c73434;
+    --shadow-sm:0 1px 2px rgba(40,34,22,.06); --shadow-md:0 8px 22px rgba(40,34,22,.08); --shadow-lg:0 24px 60px rgba(40,34,22,.2), 0 1px 0 rgba(255,255,255,.5) inset;
     --ring: 0 0 0 1px var(--panel), 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
   }
   * { box-sizing:border-box } html,body { margin:0; height:100% }
@@ -31,13 +34,44 @@
          -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
          display:grid; grid-template-rows:48px 1fr; height:100vh }
   header b, .grp, #props-title, .layer-meta .nm { font-family:"Bricolage Grotesque",var(--font-ui,inherit),sans-serif }
-  header { display:flex; align-items:center; gap:14px; padding:0 16px; background:var(--panel); border-bottom:1px solid var(--line); position:relative; z-index:20; height:48px; overflow:hidden }
+  /* No overflow:hidden — the export menu and other popovers anchor BELOW the header
+     (top:calc(100% + 8px)), so clipping to the 48px bar makes them invisible while still
+     "open". min-width:0 on the flex children is what actually keeps the bar from overflowing. */
+  header { display:flex; align-items:center; gap:14px; padding:0 16px; background:var(--panel); border-bottom:1px solid var(--line); position:relative; z-index:20; height:48px }
   header b { color:var(--ink); font-size:14px; font-weight:700; letter-spacing:-.02em; display:flex; align-items:center; gap:7px }
   header b::before { content:""; width:8px; height:8px; border-radius:2.5px; background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent) }
   header .sp { flex:1 }
   header label { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); font-weight:500 }
   header > .note { color:var(--dim-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex-shrink:1 }
   header .hdiv, header .act, header label, header b, header .icon-btn { flex-shrink:0 }
+  /* Responsive header. Everything above is flex-shrink:0 in a fixed-height row, so below about
+     1100px the row simply overflowed and Export — the primary action — ran off the right edge
+     with no scrollbar to reach it (1024x768 laptops and any half-screen window hit this).
+     Rather than let it overflow, shed the optional chrome in order of how easily it is reached
+     another way, so the irreplaceable controls always fit:
+       <1180px  the app subtitle and the Compare label (Compare is also in the ⌘K palette)
+       <1080px  the Search button (⌘K opens it anyway) and the autosave note
+       <980px   the Canvas size button (also in ⌘K), the New label, and the zoom pill's +/-/fit
+                buttons — the percentage stays, and clicking it still fits to screen, so zoom
+                remains reachable there (as do the +/-/0 keyboard shortcuts)
+     Export, Open image, New, undo/redo and the zoom readout survive every step. */
+  @media (max-width: 1180px) {
+    header { gap:10px; padding:0 12px }
+    header > .note { display:none }
+    #compare-btn span { display:none }
+  }
+  @media (max-width: 1080px) {
+    #cmdk-open { display:none }
+    #save-note { display:none }
+  }
+  @media (max-width: 980px) {
+    header { gap:8px }
+    #canvas-size-btn { display:none }
+    #newdoc .lbl, #openfile .lbl { display:none }   /* icons remain, with title/aria-label intact */
+    header .hdiv { display:none }
+    #zoom-out, #zoom-in, #zoom-fit, #zoom-div { display:none }
+    #zoom-pill { border:none; background:none; padding:0 }
+  }
   /* rail | Tool/Layers (left, tab-driven) | canvas | Properties (right, selection-driven) — same
      4-column split as the reference editor, with each side panel independently collapsible. */
   main { display:grid; grid-template-columns:56px 290px 1fr 322px; min-height:0; transition:grid-template-columns .18s cubic-bezier(.4,0,.2,1); position:relative }
@@ -59,6 +93,10 @@
   #left-scroll-cue svg { color:var(--dim-2); animation:cue-bob 1.4s ease-in-out infinite }
   @keyframes cue-bob { 0%,100% { transform:translateY(0) } 50% { transform:translateY(3px) } }
   #tool-panel, #layer-panel { overflow-y:auto; min-height:0 }
+  /* Layers sits above the Tool panel and keeps its own height: flex-shrink:0 so a long tool
+     panel cannot squash the list, and the rule below divides the two. */
+  #layers-block { flex:0 0 auto; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--line) }
+  main[data-left-collapsed=true] #layers-block { display:none }
   #right-panel { border-left:1px solid var(--line); overflow:hidden; padding:14px; transition:padding .18s; display:flex; flex-direction:column; min-height:0; position:relative }
   #right-scroll-cue { position:absolute; left:0; right:8px; bottom:0; height:36px; cursor:pointer;
     background:linear-gradient(to bottom, transparent, var(--panel) 75%);
@@ -75,12 +113,20 @@
   nav::-webkit-scrollbar-thumb:hover, #left-panel *::-webkit-scrollbar-thumb:hover, #right-panel *::-webkit-scrollbar-thumb:hover { background:var(--dim-2); background-clip:padding-box }
   /* icon rail: one button per tool group, an active-tool accent fill, and a corner caret when the
      group holds 2+ tools — click toggles a flyout popover listing them (ditto's own rail pattern) */
-  .rail-btn { all:unset; box-sizing:border-box; cursor:pointer; width:40px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; position:relative; color:var(--dim); transition:background .12s,color .12s,transform .12s }
+  .rail-btn { all:unset; box-sizing:border-box; cursor:pointer; width:40px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; position:relative; color:var(--dim); transition:background .12s,transform .12s }
   .rail-btn:hover { background:var(--panel-2); color:var(--ink) }
   .rail-btn:active { transform:scale(.94) }
   .rail-btn[data-on=true] { background:var(--accent); color:var(--accent-ink); box-shadow:var(--shadow-sm) }
   .rail-btn:focus-visible { outline:none; box-shadow:var(--ring) }
-  .rail-caret { position:absolute; right:3px; bottom:3px; width:0; height:0; border-left:4px solid transparent; border-bottom:4px solid var(--dim-2) }
+  /* "This slot holds more tools" marker. Was a 4px triangle in --dim-2 — technically present,
+     but so low-contrast that 8 of the 15 rail slots read as single-tool buttons and their
+     alternates (pencil, the other lassos, burn/dodge…) were effectively undiscoverable without
+     already knowing they existed. Bigger, brighter, and it strengthens further on hover so the
+     "there's more here" cue lands right when the pointer is over it. */
+  .rail-caret { position:absolute; right:2.5px; bottom:2.5px; width:0; height:0;
+    border-left:5px solid transparent; border-bottom:5px solid var(--dim);
+    transition:border-bottom-color .12s }
+  .rail-btn:hover .rail-caret { border-bottom-color:var(--ink) }
   .rail-btn[data-on=true] .rail-caret { border-bottom-color:var(--accent-ink) }
   .rail-group { position:relative }
   .rail-flyout { position:absolute; left:48px; top:0; z-index:60; min-width:194px; background:var(--panel-2); border:1px solid var(--line); border-radius:11px; padding:6px; box-shadow:var(--shadow-lg); animation:pop-in .12s cubic-bezier(.2,.8,.3,1) }
@@ -96,6 +142,11 @@
   .font-item .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .font-item .ag { flex:none; font-size:13px; color:var(--dim-2) }
   .popover-anchor { position:relative }
+  .export-menu { position:absolute; right:0; top:calc(100% + 8px); z-index:60; min-width:208px; background:var(--panel-2); border:1px solid var(--line); border-radius:11px; padding:6px; box-shadow:var(--shadow-lg); animation:pop-in .12s cubic-bezier(.2,.8,.3,1) }
+  .export-menu-item { all:unset; box-sizing:border-box; display:flex; align-items:center; gap:8px; width:100%; padding:8px 9px; border-radius:7px; cursor:pointer; font-size:12.5px; font-weight:600; color:var(--ink); transition:background .1s }
+  .export-menu-item:hover { background:var(--bg) }
+  #export-caret svg { transition:transform .12s }
+  #export-btn[data-open=true] #export-caret svg { transform:rotate(180deg) }
   .rail-flyout-item { display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:7px; cursor:pointer; font-size:12.5px; color:var(--ink); transition:background .1s }
   .rail-flyout-item:hover, .rail-flyout-item[data-on=true] { background:var(--bg) }
   .rail-flyout-item svg { flex-shrink:0; color:var(--dim) }
@@ -105,10 +156,10 @@
   @keyframes tip-in { from { opacity:0; transform:translateY(-50%) translateX(-3px) } to { opacity:1; transform:translateY(-50%) } }
   .rail-bottom { display:flex; flex-direction:column; align-items:center; gap:3px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line) }
   .tabs { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:16px; padding:3px; background:var(--bg); border-radius:9px; border:1px solid var(--line-soft) }
-  .tabs button { display:flex; align-items:center; justify-content:center; gap:6px; flex:1 1 auto; min-width:calc(33% - 4px); width:auto; padding:7px 8px; border-radius:7px; font-size:12px; font-weight:600; color:var(--dim); white-space:nowrap; transition:background .12s,color .12s,box-shadow .12s }
+  .tabs button { display:flex; align-items:center; justify-content:center; gap:6px; flex:1 1 auto; min-width:calc(33% - 4px); width:auto; padding:7px 8px; border-radius:7px; font-size:12px; font-weight:600; color:var(--dim); white-space:nowrap; transition:background .12s,box-shadow .12s }
   .tabs button:hover { color:var(--ink) } .tabs button[data-on=true] { background:var(--panel-2); color:var(--ink); box-shadow:var(--shadow-sm) }
   .collapse-btn { position:absolute; top:50%; width:20px; height:60px; padding:0; transform:translateY(-50%);
-    border:1px solid var(--line); background:var(--panel-2); color:var(--dim-2); cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:2; transition:left .18s cubic-bezier(.4,0,.2,1), right .18s cubic-bezier(.4,0,.2,1), color .12s, border-color .12s, background .12s, width .12s; box-shadow:var(--shadow-sm) }
+    border:1px solid var(--line); background:var(--panel-2); color:var(--dim-2); cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:2; transition:left .18s cubic-bezier(.4,0,.2,1), right .18s cubic-bezier(.4,0,.2,1), border-color .12s, background .12s, width .12s; box-shadow:var(--shadow-sm) }
   .collapse-btn:hover { color:var(--accent-ink); border-color:var(--accent); background:var(--accent); width:22px }
   .collapse-btn:focus-visible { outline:none; box-shadow:var(--ring) }
   #collapse-left { border-radius:0 8px 8px 0; border-left:none }
@@ -118,12 +169,27 @@
   main[data-left-collapsed=true] #collapse-left { left:55px }
   #collapse-right { right:321px }
   main[data-right-collapsed=true] #collapse-right { right:0 }
-  .align-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:10px 0 }
+  .align-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin:10px 0 }
   .align-grid button { display:flex; align-items:center; justify-content:center; height:30px; border-radius:8px; border:1px solid var(--line); font-size:11px; color:var(--dim) }
   .align-grid button:hover { border-color:var(--dim-2); color:var(--ink); background:var(--panel-2) }
-  .pill-toggle { width:auto; display:inline-flex; padding:6px 13px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid var(--line); color:var(--dim); margin-top:10px; transition:background .12s,color .12s,border-color .12s }
+  .pill-toggle { width:auto; display:inline-flex; padding:6px 13px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid var(--line); color:var(--dim); margin-top:10px; transition:background .12s,border-color .12s }
   .pill-toggle:hover { border-color:var(--dim-2) }
   .pill-toggle[data-on=true] { background:var(--ink); color:var(--bg); border-color:var(--ink) }
+  /* status pill next to a section label (e.g. "Active") — small, quiet, accent-tinted */
+  .status-pill { display:inline-flex; align-items:center; margin-left:auto; padding:2px 8px; border-radius:999px; background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent); font-size:9.5px; font-weight:700; letter-spacing:.04em; text-transform:none }
+  /* two-up checkbox row: "Snap to grid" / "Auto-detect" ────────────────────────────────────── */
+  .check-row { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:10px }
+  .check-item { all:unset; box-sizing:border-box; display:flex; align-items:center; gap:7px; cursor:pointer; font-size:12px; font-weight:500; color:var(--ink) }
+  .check-item .box { flex-shrink:0; width:14px; height:14px; border-radius:4px; border:1px solid var(--dim-2); display:flex; align-items:center; justify-content:center; color:transparent; transition:background .12s,border-color .12s }
+  .check-item[data-on=true] { background:none; color:var(--ink); font-weight:500 }
+  .check-item[data-on=true] .box { background:var(--accent); border-color:var(--accent); color:var(--accent-ink) }
+  .check-item:hover .box { border-color:var(--accent) }
+  /* AI Vision Engine action: an accent-bordered, subtly glowing button so it reads as the
+     "hero" action of its card rather than a plain .act button */
+  .ai-detect-btn { all:unset; box-sizing:border-box; cursor:pointer; width:100%; display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; padding:10px 12px; border-radius:10px; border:1px solid color-mix(in srgb, var(--accent) 55%, transparent); background:color-mix(in srgb, var(--accent) 14%, var(--panel)); color:var(--ink); font-size:12.5px; font-weight:700; transition:background .12s,border-color .12s,transform .1s }
+  .ai-detect-btn:hover { background:color-mix(in srgb, var(--accent) 22%, var(--panel)); border-color:var(--accent) }
+  .ai-detect-btn:active { transform:translateY(.5px) }
+  .ai-detect-btn svg { color:var(--accent); flex-shrink:0 }
   #stage { position:relative; display:grid; place-items:center; overflow:hidden; background:var(--stage);
     background-image:
       linear-gradient(color-mix(in srgb, var(--ink) 4%, transparent) 1px, transparent 1px),
@@ -131,14 +197,17 @@
     background-size:24px 24px }
   /* floating zoom pill (bottom-right) + canvas-size badge (top-left) — matches the reference
      editor's overlay chrome, drawn over the canvas rather than living in the header. */
-  #zoom-pill { position:absolute; bottom:16px; right:16px; z-index:15; display:flex; align-items:center; gap:2px;
-    background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:4px; box-shadow:var(--shadow-lg) }
-  #zoom-pill button { all:unset; box-sizing:border-box; cursor:pointer; width:26px; height:26px; border-radius:999px; display:flex; align-items:center; justify-content:center; color:var(--dim); transition:background .1s,color .1s }
+  /* Lives in the header now, so it is an inline control rather than a floating overlay: no
+     absolute position, no drop shadow (nothing to lift it off), and a flat border matching the
+     other header clusters. Moving it also frees the bottom-right corner of the canvas, which it
+     used to cover. */
+  #zoom-pill { display:flex; align-items:center; gap:2px; flex:none;
+    background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:3px }
+  #zoom-pill button { all:unset; box-sizing:border-box; cursor:pointer; width:24px; height:24px; border-radius:999px; display:flex; align-items:center; justify-content:center; color:var(--dim); transition:background .1s }
   #zoom-pill button:hover { background:var(--panel-2); color:var(--ink) }
-  #zoom-pct { all:unset; box-sizing:border-box; cursor:pointer; min-width:48px; padding:0 6px; height:26px; border-radius:999px; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:600; color:var(--ink); font-family:"JetBrains Mono",ui-monospace,monospace; transition:background .1s }
+  #zoom-pct { all:unset; box-sizing:border-box; cursor:pointer; min-width:46px; padding:0 6px; height:24px; border-radius:999px; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:600; color:var(--ink); font-family:"JetBrains Mono",ui-monospace,monospace; transition:background .1s }
   #zoom-pct:hover { background:var(--panel-2) }
   #zoom-div { width:1px; height:18px; background:var(--line); margin:0 3px }
-  #dim-badge { position:absolute; top:14px; left:14px; z-index:15; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:5px 11px; font-size:11px; font-weight:600; font-family:"JetBrains Mono",ui-monospace,monospace; color:var(--dim); box-shadow:var(--shadow-sm) }
   #extend-banner { position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:16; display:flex; align-items:center; gap:7px; background:var(--accent); color:var(--accent-ink); border:none; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; box-shadow:var(--shadow-lg); animation:pop-in .15s cubic-bezier(.2,.8,.3,1) }
   #extend-banner[hidden] { display:none }
   #extend-banner:hover { filter:brightness(1.06) }
@@ -207,7 +276,7 @@
   .compare-pane { position:relative; display:grid; place-items:center; background:var(--stage); border:1px solid var(--line); border-radius:12px; overflow:hidden; min-height:0 }
   .compare-pane img { max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; box-shadow:var(--shadow-lg) }
   .compare-label { position:absolute; top:14px; left:14px; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:4px 11px; font-size:11px; font-weight:600; color:var(--dim) }
-  button { all:unset; box-sizing:border-box; cursor:pointer; display:flex; align-items:center; gap:8px; width:100%; padding:8px 11px; border-radius:9px; font-size:13px; font-weight:500; transition:background .1s,border-color .1s,color .1s }
+  button { all:unset; box-sizing:border-box; cursor:pointer; display:flex; align-items:center; gap:8px; width:100%; padding:8px 11px; border-radius:9px; font-size:13px; font-weight:500; transition:background .1s,border-color .1s }
   button:hover { background:var(--panel-2) } button[data-on=true] { background:var(--accent); color:var(--accent-ink); font-weight:600 }
   button[data-on=true] svg { color:var(--accent-ink) }
   button:focus-visible { outline:none; box-shadow:var(--ring) }
@@ -222,7 +291,7 @@
   .ai-card-title span:first-of-type { flex:1; white-space:nowrap }
   .ai-card p { margin:8px 0 0; font-size:12px; color:var(--dim); line-height:1.55 }
   .ai-card .tag { margin-left:2px; flex-shrink:0 }
-  .icon-btn { all:unset; box-sizing:border-box; cursor:pointer; display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px; border:1px solid var(--line); color:var(--dim); transition:border-color .1s,color .1s,background .1s }
+  .icon-btn { all:unset; box-sizing:border-box; cursor:pointer; display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px; border:1px solid var(--line); color:var(--dim); transition:border-color .1s,background .1s }
   .icon-btn:hover { border-color:var(--dim-2); color:var(--ink); background:var(--panel-2) }
   .icon-btn:focus-visible, .act:focus-visible { outline:none; box-shadow:var(--ring) }
   .icon-btn[data-active=true] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent) }
@@ -230,6 +299,10 @@
   input[type=color] { width:27px; height:26px; border:none; background:none; border-radius:7px; overflow:hidden; cursor:pointer }
   input[type=color]::-webkit-color-swatch-wrapper { padding:0 }
   input[type=color]::-webkit-color-swatch { border:1px solid var(--line); border-radius:7px }
+  /* quick color-preset row next to the brush colour picker — one click sets toolOpts.color/fill */
+  .swatch-btn { all:unset; box-sizing:border-box; width:22px; height:22px; border-radius:50%; cursor:pointer; border:2px solid var(--line); transition:transform .1s,border-color .1s }
+  .swatch-btn:hover { transform:scale(1.1) }
+  .swatch-btn[data-on=true] { border-color:var(--ink) }
   /* ── range sliders: flat themed track + thumb, cross-browser (native chrome doesn't follow the
      dark palette otherwise — grey track, default-blue thumb, clashing with everything else) ──── */
   input[type=range] { width:110px; min-width:0; -webkit-appearance:none; appearance:none; background:transparent; cursor:pointer }
@@ -266,7 +339,7 @@
   .layer-actions button { all:unset; box-sizing:border-box; cursor:pointer; width:21px; height:21px; display:flex; align-items:center; justify-content:center; border-radius:6px; color:var(--dim) }
   .layer-actions button:hover { background:var(--bg); color:var(--ink) }
   .layer-actions button[data-active=true] { opacity:1; color:var(--ink) }
-  .chip { all:unset; box-sizing:border-box; cursor:pointer; display:inline-flex; align-items:center; gap:5px; width:auto; padding:7px 12px; border-radius:999px; font-size:11.5px; font-weight:600; border:1px solid var(--line); color:var(--ink); transition:border-color .1s,background .1s }
+  .chip { all:unset; box-sizing:border-box; cursor:pointer; display:inline-flex; align-items:center; gap:5px; width:auto; padding:7px 12px; border-radius:4px; font-size:11.5px; font-weight:600; border:1px solid var(--line); color:var(--ink); transition:border-color .1s,background .1s }
   .chip:hover { border-color:var(--dim-2); background:var(--panel-2) }
   .chip:focus-visible { outline:none; box-shadow:var(--ring) }
   .chip[data-on=true] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent) }
@@ -312,26 +385,56 @@
   a:focus-visible { outline:none; box-shadow:var(--ring); border-radius:4px }
   ::selection { background:color-mix(in srgb, var(--accent) 55%, transparent); color:var(--ink) }
 
-  /* ── header: vertical dividers between control clusters, primary treatment for export ──────── */
+  /* ── header: vertical dividers between control clusters ─────────────────────────────────── */
   header .hdiv { width:1px; height:22px; background:var(--line); flex:none }
+  /* Autosave readout — quiet when things are fine, amber when the document is too big to save
+     (or storage is blocked), since that's the only case the user has to act on. */
+  /* Toast: a transient confirmation with an optional action. Exists mainly so "New" can offer
+     an Undo instead of being a one-click point of no return — a confirm() dialog can only ask
+     BEFORE the fact, which trains people to click through it. */
+  /* Drop cue: dragging a file over the canvas produced no visual response at all, so there was
+     no way to know a drop would work until after letting go. Covers the stage (not just the
+     artboard) because that is the whole drop target. */
+  #stage[data-dropping=true]::after {
+    content:"Drop image to add it"; position:absolute; inset:10px; z-index:30; pointer-events:none;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    border:2px dashed var(--accent); border-radius:14px;
+    background:color-mix(in srgb, var(--accent) 10%, transparent);
+    color:var(--ink); font-size:14px; font-weight:700; letter-spacing:-.01em;
+  }
+  #toast-wrap { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:400; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none }
+  .toast { display:flex; align-items:center; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:12.5px; color:var(--ink); box-shadow:var(--shadow-lg); pointer-events:auto; animation:toast-in .16s ease-out }
+  @keyframes toast-in { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:none } }
+  .toast button { all:unset; cursor:pointer; font-weight:700; color:var(--accent); padding:2px 4px; border-radius:5px }
+  .toast button:hover { text-decoration:underline }
+  .toast button:focus-visible { outline:none; box-shadow:var(--ring) }
+  .export-scale-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 10px 5px; font-size:11px; color:var(--dim) }
+  .export-scale { display:flex; gap:3px }
+  .export-scale-btn { all:unset; box-sizing:border-box; cursor:pointer; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600; color:var(--dim); border:1px solid var(--line) }
+  .export-scale-btn:hover { color:var(--ink); border-color:var(--dim-2) }
+  .export-scale-btn[data-on=true] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent) }
+  .export-scale-btn:focus-visible { outline:none; box-shadow:var(--ring) }
+  /* The exact pixel size the chosen scale produces — "2x" alone doesn't tell you whether the
+     result clears a print or retina requirement. */
+  .export-dims { padding:0 10px 7px; font-size:10.5px; color:var(--dim-2); font-variant-numeric:tabular-nums }
+  .export-sep { height:1px; background:var(--line); margin:5px 0 }
+  .export-hint { margin-left:auto; padding-left:10px; font-size:9.5px; color:var(--dim-2); font-weight:500; white-space:nowrap }
+  .export-menu-item { display:flex; align-items:center; gap:6px; white-space:nowrap }
+  .save-note { font-size:11px; color:var(--dim-2); white-space:nowrap; flex:none; display:flex; align-items:center; gap:5px }
+  .save-note::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--dim-2) }
+  .save-note[data-warn=true] { color:#e0a02a }
+  .save-note[data-warn=true]::before { background:#e0a02a }
   header .act { margin-top:0; padding:7px 13px; font-size:12.5px; white-space:nowrap; flex:none }
-  header #png, header #svg, header #jpg { border-color:transparent; background:var(--accent); color:var(--accent-ink); font-weight:700 }
-  header #png:hover, header #svg:hover, header #jpg:hover { filter:brightness(1.08); border-color:transparent }
-  header #svg, header #jpg { background:transparent; color:var(--ink); border-color:var(--line) }
-  header #svg:hover, header #jpg:hover { background:var(--panel-2); filter:none; border-color:var(--dim-2) }
 </style>
 </head>
 <body>
 <header>
-  <b>Canvasmith</b><span class="note" title="Every control on this page is a public Editor API call — no framework, no build step.">vanilla shell on the headless core</span>
+  <b>Canvasmith</b>
   <span class="hdiv"></span>
-  <button class="act" id="openfile"><span id="openfile-icon"></span>Open image…</button>
+  <button class="act" id="newdoc" title="Start a new document (clears the current one)"><span id="newdoc-icon"></span><span class="lbl">New</span></button>
+  <button class="act" id="openfile" title="Open image as a new document"><span id="openfile-icon"></span><span class="lbl">Open image…</span></button>
   <input type="file" id="file" accept="image/*" hidden>
   <span class="sp"></span>
-  <label>Size <input type="range" id="size" min="2" max="220" value="30"></label>
-  <label>Opacity <input type="range" id="op" min="0.05" max="1" step="0.05" value="1"></label>
-  <input type="color" id="col" value="#ef6a2d" title="colour">
-  <span class="hdiv"></span>
   <button class="icon-btn" id="undo" title="Undo"></button>
   <button class="icon-btn" id="redo" title="Redo"></button>
   <span class="hdiv"></span>
@@ -357,33 +460,93 @@
       </div>
     </div>
   </div>
+  <div id="zoom-pill">
+    <button id="zoom-out" title="Zoom out (−)"></button>
+    <button id="zoom-pct" title="Reset to fit"></button>
+    <button id="zoom-in" title="Zoom in (+)"></button>
+    <span id="zoom-div"></span>
+    <button id="zoom-fit" title="Fit to screen (0)"></button>
+  </div>
   <button class="icon-btn" id="theme-toggle" title="Toggle light/dark theme"></button>
   <span class="hdiv"></span>
+  <span class="save-note" id="save-note" hidden></span>
   <button class="act" id="compare-btn" title="Compare with the first-loaded version" disabled></button>
   <span class="hdiv"></span>
-  <button class="act" id="svg">⬇ SVG</button>
-  <button class="act" id="jpg">⬇ JPG</button>
-  <button class="act" id="png">⬇ PNG</button>
+  <div class="popover-anchor">
+    <button class="act act-accent" id="export-btn">⬇ Export image <span id="export-caret"></span></button>
+    <div class="export-menu" id="export-menu" hidden>
+      <div class="export-scale-row">
+        <span>Size</span>
+        <div class="export-scale" id="export-scale" role="group" aria-label="Export size">
+          <button class="export-scale-btn" data-scale="1" data-on="true">1&times;</button>
+          <button class="export-scale-btn" data-scale="2">2&times;</button>
+          <button class="export-scale-btn" data-scale="3">3&times;</button>
+        </div>
+      </div>
+      <div class="export-dims" id="export-dims"></div>
+      <button class="export-menu-item" data-format="png">⬇ PNG</button>
+      <button class="export-menu-item" data-format="jpg">⬇ JPG</button>
+      <button class="export-menu-item" data-format="svg">⬇ SVG <span class="export-hint">vector</span></button>
+      <div class="export-sep"></div>
+      <button class="export-menu-item" data-format="project">⬇ Project file <span class="export-hint">keeps layers</span></button>
+      <button class="export-menu-item" id="open-project">⬆ Open project…</button>
+    </div>
+  </div>
 </header>
 <main>
   <nav id="tools"></nav>
 
-  <!-- LEFT: Tool / Layers tabs — tool-specific hints & actions, or the layer list + open/AI -->
+  <!-- LEFT: the layer list (scene state, always visible) above tool-specific hints & actions for
+       whatever's active on the rail; the right panel holds that layer's own properties. -->
   <div id="left-panel">
-    <div class="tabs" id="left-tabs">
-      <button data-tab="tool" data-on="true"></button>
-      <button data-tab="layers"></button>
+    <!-- Layers list lives on the LEFT, above the (per-tool) Tool panel: it is scene state, not
+         tool state, so it stays put as tools change while the right panel keeps Properties. -->
+    <div id="layers-block">
+      <div class="grp" style="margin-top:0;padding-top:0;border-top:none">Layers</div>
+      <div id="layers" style="min-height:60px; max-height:220px; overflow-y:auto"></div>
+      <button class="act" id="add-adjustment" style="width:100%;margin-top:8px"></button>
     </div>
     <div id="tool-panel">
       <div id="maskedit-banner" style="display:none;background:var(--accent);color:var(--accent-ink);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;font-weight:600">
         Editing layer mask — paint white to reveal, black to hide.
         <button class="act" id="maskedit-done" style="width:100%;margin-top:8px;background:var(--panel);color:var(--ink)">Done editing mask</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span id="tool-icon"></span><strong id="tool-name" style="text-transform:capitalize"></strong>
+      <div class="grp" style="margin-top:0;padding-top:0;border-top:none;display:flex;align-items:center">
+        <span id="tool-icon" style="display:flex;margin-right:6px"></span><span id="tool-name" style="text-transform:uppercase"></span>
+        <span class="status-pill" id="tool-status-pill">Active</span>
       </div>
       <div class="note" id="tool-hint" style="margin-top:0"></div>
-      <button class="pill-toggle" id="snap-toggle" data-on="true">Snap: on</button>
+      <div class="check-row">
+        <button class="check-item" id="snap-toggle" data-on="true"><span class="box"></span>Snap to grid</button>
+        <button class="check-item" id="autodetect-toggle" data-on="true"><span class="box"></span>Auto-detect</button>
+      </div>
+
+      <div id="brush-section" style="display:none">
+        <div class="grp" style="margin-top:0;padding-top:0;border-top:none" id="brush-section-label">Brush</div>
+        <div class="slider-row" id="brush-size-row">Size <input type="range" id="brush-size" min="2" max="220" value="30"><span class="tag mono" id="brush-size-val"></span></div>
+        <div class="slider-row" id="brush-soft-row" style="margin-top:6px">Soft <input type="range" id="brush-soft" min="0" max="100" value="30"><span class="tag mono" id="brush-soft-val"></span></div>
+        <div class="slider-row" id="brush-opacity-row" style="margin-top:6px">Opacity <input type="range" id="brush-opacity" min="5" max="100" value="100"><span class="tag mono" id="brush-opacity-val"></span></div>
+        <div id="brush-color-row" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="color" id="brush-color" value="#4f8ff0" title="colour">
+          <div id="brush-swatches" style="display:flex;gap:6px;flex:1"></div>
+        </div>
+      </div>
+
+      <div id="clone-section" style="display:none">
+        <div class="grp" id="clone-title">Clone stamp</div>
+        <div class="note" id="clone-status" style="margin-top:6px"></div>
+        <button class="act" id="clone-reset" style="width:100%;margin-top:8px">Reset source</button>
+        <div class="note" style="margin-top:8px">⌥-click or ⇧-click re-sources at any time</div>
+      </div>
+
+      <div id="paint-target-section" style="display:none">
+        <div class="grp">Destination</div>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:12px;cursor:pointer">
+          <input type="checkbox" id="paint-new-layer">
+          <span>Paint on a new layer</span>
+        </label>
+        <div class="note" id="paint-target-note" style="margin-top:6px"></div>
+      </div>
 
       <div id="objselect-section" style="display:none">
         <div class="note" id="objselect-status" style="margin-top:8px"></div>
@@ -391,13 +554,13 @@
           <button class="chip" id="objselect-add"></button>
         </div>
         <label style="display:block;margin-top:8px;font-size:11px;color:var(--dim)">Tolerance
-          <input type="range" id="objselect-tolerance" min="4" max="128" value="32" style="width:100%">
+          <input type="range" id="objselect-tolerance" min="4" max="128" value="64" style="width:100%">
         </label>
         <div class="note" style="margin-top:8px">⇧ add · ⌥ subtract · [ ] tolerance</div>
       </div>
 
       <div id="gradient-section" style="display:none">
-        <div class="grp" style="margin-top:0;padding-top:0;border-top:none">Gradient</div>
+        <div class="grp">Gradient</div>
         <div style="display:flex;gap:6px">
           <button class="act" id="grad-type-linear" style="flex:1">Linear</button>
           <button class="act" id="grad-type-radial" style="flex:1">Radial</button>
@@ -407,63 +570,52 @@
         <div class="note">Drag on the canvas to paint the gradient.</div>
       </div>
 
-      <div class="grp">Align to canvas</div>
-      <div class="align-grid">
-        <button data-edge="left" title="Align left"></button><button data-edge="center" title="Align center"></button><button data-edge="right" title="Align right"></button>
-        <button data-edge="top" title="Align top"></button><button data-edge="middle" title="Align middle"></button><button data-edge="bottom" title="Align bottom"></button>
+      <div class="grp">Transform</div>
+      <div style="display:flex;gap:6px">
+        <button class="act" id="duplicate" style="flex:1"></button>
+        <button class="act" id="tool-flip-hv" style="flex:1"></button>
       </div>
-      <button class="act" id="duplicate" style="width:100%"></button>
 
-      <div class="grp">Auto-detect</div>
-      <button class="act" id="sel-detect" style="width:100%"></button>
+      <div class="grp" style="display:flex;align-items:center;gap:6px">
+        <span id="ai-vision-icon" style="display:flex;color:var(--accent)"></span>AI Vision Engine
+        <span class="tag mono" style="margin-left:auto">v3.4</span>
+      </div>
+      <button class="ai-detect-btn" id="sel-detect"></button>
       <div id="detect-results" style="display:flex;flex-direction:column;gap:2px;margin-top:6px"></div>
 
-      <div class="grp">Selection (needs a selection)</div>
+      <div class="grp">Selection modifiers</div>
       <div style="display:flex;gap:6px">
         <button class="act" id="sel-expand" style="flex:1"></button>
         <button class="act" id="sel-contract" style="flex:1"></button>
       </div>
       <button class="act" id="sel-similar" style="width:100%;margin-top:6px"></button>
       <button class="act" id="sel-recolor-btn" style="width:100%;margin-top:6px"></button>
-      <input type="color" id="sel-recolor" value="#ef6a2d" style="width:100%;margin-top:6px;display:none">
+      <input type="color" id="sel-recolor" value="#4f8ff0" style="width:100%;margin-top:6px;display:none">
       <div style="display:flex;gap:6px;margin-top:6px">
         <button class="act" id="sel-clip" style="flex:1"></button>
         <button class="act" id="sel-unclip" style="flex:1"></button>
       </div>
       <div class="note" id="sel-msg"></div>
     </div>
-    <div id="layers-panel" style="display:none; flex-direction:column; flex:1; min-height:0; overflow-y:auto">
-      <div class="grp" style="margin-top:0;padding-top:0;border-top:none">Layers</div>
-      <div id="layers" style="min-height:60px; max-height:220px; overflow-y:auto"></div>
-      <button class="act" id="add-adjustment" style="width:100%;margin-top:8px"></button>
-    </div>
     <div id="left-scroll-cue"></div>
   </div>
 
   <div id="stage">
     <canvas id="cv"></canvas>
-    <span id="dim-badge"></span>
     <button id="extend-banner" hidden></button>
     <span id="aiinsert-dot" hidden></span>
     <div id="aiinsert-popover" hidden>
-      <div class="aiinsert-title"><span id="aiinsert-title-text"></span><button class="aiinsert-close" id="aiinsert-close"></button></div>
+      <div class="aiinsert-title"><span id="aiinsert-title-text"></span><button class="aiinsert-close" id="aiinsert-close" title="Close" aria-label="Close"></button></div>
       <div class="note" id="aiinsert-note" style="display:none"></div>
       <input type="text" id="aiinsert-prompt" placeholder="Describe what to draw here…">
       <button class="act act-accent" id="aiinsert-run"></button>
-    </div>
-    <div id="zoom-pill">
-      <button id="zoom-out" title="Zoom out (−)"></button>
-      <button id="zoom-pct" title="Reset to fit"></button>
-      <button id="zoom-in" title="Zoom in (+)"></button>
-      <span id="zoom-div"></span>
-      <button id="zoom-fit" title="Fit to screen (0)"></button>
     </div>
     <svg id="review-hover-preview" hidden width="1" height="1"><polygon fill="rgba(212,255,69,.28)" stroke="#d4ff45" stroke-width="2"></polygon></svg>
   </div>
   <button class="collapse-btn" id="collapse-left" title="Hide side panel"></button>
   <button class="collapse-btn" id="collapse-right" title="Hide Properties panel"></button>
 
-  <!-- RIGHT: Layer (properties) / Design / Stickers / AI — tabbed, matching the reference editor's
+  <!-- RIGHT: Properties / Design / Stickers / AI — tabbed, matching the reference editor's
        right-hand panel (ditto's own rail keeps Tool/Layers on the left and everything else here). -->
   <div id="right-panel">
     <div class="tabs" id="right-tabs">
@@ -473,14 +625,14 @@
       <button data-tab="ai"></button>
     </div>
     <div id="layer-panel">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:8px;margin-top:0;margin-bottom:10px">
       <strong id="props-title" style="font-size:13px">Properties</strong>
     </div>
 
     <div id="props-empty">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 15l4-4 4 4 4-6 4 4"/></svg>
       <span class="h">Nothing selected</span>
-      <span class="d">Select a layer on the canvas or from the Layers panel to see and edit its properties.</span>
+      <span class="d">Select a layer above, or on the canvas, to see and edit its properties.</span>
     </div>
 
     <div id="props-body">
@@ -494,6 +646,12 @@
     <div style="display:flex;gap:6px;margin-top:6px">
       <button class="act" id="group-btn" style="flex:1"></button>
       <button class="act" id="ungroup-btn" style="flex:1"></button>
+    </div>
+
+    <div class="grp">Canvas alignment</div>
+    <div class="align-grid">
+      <button data-edge="left" title="Align left"></button><button data-edge="center" title="Align center"></button><button data-edge="right" title="Align right"></button>
+      <button data-edge="top" title="Align top"></button><button data-edge="middle" title="Align middle"></button><button data-edge="bottom" title="Align bottom"></button>
     </div>
 
     <div id="adjust-section" style="display:none">
@@ -539,7 +697,7 @@
         <button class="act" id="fill-mode-gradient" style="flex:1">Gradient</button>
       </div>
       <div id="fill-solid" style="display:flex;align-items:center;gap:8px">
-        <input type="color" id="xf-fill" value="#ef6a2d" title="Fill colour" style="flex-shrink:0">
+        <input type="color" id="xf-fill" value="#4f8ff0" title="Fill colour" style="flex-shrink:0">
         <span class="note" style="margin:0">Colour of the selected shape or text.</span>
       </div>
       <div id="fill-gradient" style="display:none">
@@ -724,6 +882,7 @@
 </div>
 
 <!-- Compare: side-by-side view of the first-loaded image vs. the current canvas render. -->
+<div id="toast-wrap" aria-live="polite"></div>
 <div id="compare-backdrop" hidden>
   <div id="compare-box">
     <div id="compare-header">
@@ -743,7 +902,8 @@
 <script type="module">
 import { Editor, GeminiProvider, installBridge, installDropImport, selectionToPath2D, selectionPolys, makeShape, makeText, installKeybindings, TOOL_KEYS, FONT_GROUPS, FONT_STYLESHEET_URL, STICKER_GROUPS, stickerSpec, STICKER_DEFAULT_LABEL, REGION_COLOR, REGION_NAME,
   startSelection, updateSelection, finalizeSelection, startPolyBuild, polyBuildAdd, polyBuildPreview, finishPolyBuild,
-  snapToEdge, selectionBounds, uid }
+  snapToEdge, selectionBounds, uid, PAINT_TOOLS, SHAPE_TOOLS, installAutosave, restoreSession,
+  discardToTrash, restoreDiscarded, exportProject, loadProject }
   from '../../packages/core/src/index.js';
 
 /* The fabric <canvas> element is sized to fill the STAGE (like the reference editor's fitView),
@@ -896,8 +1056,11 @@ const drawOverlays = () => {
     // Marching ants: both strokes share the same crawling offset (the black stroke stays 6px
     // ahead so the two dash patterns interleave instead of overlapping) — antsOffset is bumped by
     // a standalone rAF loop below, independent of whatever triggered this particular render.
+    // Lime (matches REGION_COLOR.product / the region-review hover preview) rather than the app's
+    // blue accent — a pixel selection isn't an "accent-colored UI control", it needs to read as a
+    // distinct marching-ants marquee against any layer content, same convention ditto itself uses.
     ctx.lineDashOffset = -antsOffset / v[0];
-    ctx.strokeStyle = '#ef6a2d'; ctx.stroke(p);
+    ctx.strokeStyle = '#d4ff45'; ctx.stroke(p);
     ctx.lineDashOffset = (6 - antsOffset) / v[0]; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.stroke(p);
     ctx.setLineDash([]);
     // A rect/ellipse marquee is grabbable after the fact (see Editor#_down's getSelectionHandle
@@ -905,12 +1068,27 @@ const drawOverlays = () => {
     // only while a marquee tool is active so other tools' selection outline stays uncluttered.
     const s = ed.selection;
     if ((s.kind === 'rect' || s.kind === 'ellipse') && (ed.tool === 'marquee' || ed.tool === 'marquee-ellipse')) {
-      const hs = 4.5 / v[0]; ctx.fillStyle = '#ef6a2d'; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineWidth = 1 / v[0];
+      const hs = 4.5 / v[0]; ctx.fillStyle = '#d4ff45'; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineWidth = 1 / v[0];
       for (const [hx, hy] of [[s.x, s.y], [s.x + s.w, s.y], [s.x, s.y + s.h], [s.x + s.w, s.y + s.h],
                               [s.x + s.w / 2, s.y], [s.x + s.w / 2, s.y + s.h], [s.x, s.y + s.h / 2], [s.x + s.w, s.y + s.h / 2]]) {
         ctx.beginPath(); ctx.arc(hx, hy, hs, 0, 7); ctx.fill(); ctx.stroke();
       }
     }
+    // Live "W × H" readout above the selection, constant SCREEN size regardless of zoom (same
+    // /v[0] inverse-scale trick the crop tool's own dimension label below uses) — every selection
+    // kind (marquee/lasso/wand/object-select/etc.) gets this, not just crop.
+    const b = selectionBounds(ed.selection, ed.W, ed.H);
+    const dimLabel = Math.round(b.w) + ' × ' + Math.round(b.h);
+    const dfs = 12 / v[0], dpad = 6 / v[0];
+    ctx.font = dfs + 'px "JetBrains Mono", ui-monospace, monospace';
+    const dtw = ctx.measureText(dimLabel).width;
+    const dlx = b.x + b.w / 2, dly = b.y - dpad * 2 - dfs / 2;
+    ctx.fillStyle = 'rgba(20,20,23,.92)';
+    ctx.beginPath(); ctx.roundRect(dlx - dtw / 2 - dpad, dly - dfs / 2 - dpad * 0.6, dtw + dpad * 2, dfs + dpad * 1.2, dpad);
+    ctx.fill();
+    ctx.fillStyle = '#f1efe9'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(dimLabel, dlx, dly);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   }
   if (hoverPreview) {
     const p = selectionToPath2D({ kind: 'poly', pts: hoverPreview.pts }, ed.W, ed.H);
@@ -930,7 +1108,7 @@ const drawOverlays = () => {
       ctx.beginPath(); ctx.moveTo(c.x + c.w * i / 3, c.y); ctx.lineTo(c.x + c.w * i / 3, c.y + c.h); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(c.x, c.y + c.h * i / 3); ctx.lineTo(c.x + c.w, c.y + c.h * i / 3); ctx.stroke();
     }
-    const hs = 5.5 / v[0]; ctx.fillStyle = '#ef6a2d';
+    const hs = 5.5 / v[0]; ctx.fillStyle = '#4f8ff0';
     for (const [hx, hy] of [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h],
                             [c.x + c.w / 2, c.y], [c.x + c.w / 2, c.y + c.h], [c.x, c.y + c.h / 2], [c.x + c.w, c.y + c.h / 2]])
       ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
@@ -958,21 +1136,123 @@ const drawOverlays = () => {
       ctx.beginPath(); ctx.moveTo(dragGuides.y.x0, dragGuides.y.y); ctx.lineTo(dragGuides.y.x1, dragGuides.y.y); ctx.stroke();
     }
   }
+  if (gradAxis) drawGradientAxis(ctx, gradAxis, v[0]);
+  if (brushCursor) drawBrushCursor(ctx, brushCursor, v[0]);
   if (penBuild && penBuild.pts.length) {
     // Pen tool in-progress path: solid polyline through placed points + a hollow dot on each
     // vertex, filled dot on the first (the "click here to close" target).
-    ctx.strokeStyle = '#ef6a2d'; ctx.lineWidth = 1.4 / v[0]; ctx.setLineDash([]);
+    ctx.strokeStyle = '#4f8ff0'; ctx.lineWidth = 1.4 / v[0]; ctx.setLineDash([]);
     ctx.beginPath();
     penBuild.pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
     ctx.stroke();
     const r = 3.5 / v[0];
     penBuild.pts.forEach((p, i) => {
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7);
-      if (i === 0) { ctx.fillStyle = '#ef6a2d'; ctx.fill(); } else { ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#ef6a2d'; ctx.lineWidth = 1.2 / v[0]; ctx.stroke(); }
+      if (i === 0) { ctx.fillStyle = '#4f8ff0'; ctx.fill(); } else { ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#4f8ff0'; ctx.lineWidth = 1.2 / v[0]; ctx.stroke(); }
     });
   }
   ctx.restore();
 };
+/* Brush-footprint ring at the pointer (the OS cursor is hidden for paint tools — see Editor's
+   _cursorForTool), plus clone/heal's source affordances. Without these the clone tool is a plain
+   crosshair that gives no clue a source must be picked, or where it was picked from. */
+const drawBrushCursor = (ctx, c, z) => {
+  const r = Math.max(0.5, c.size / 2), px = 1 / z;
+  const ring = (x, y, rad, color) => {
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, 7);
+    ctx.setLineDash([]);
+    ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke();
+    ctx.lineWidth = 1.3 * px; ctx.strokeStyle = color; ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  const cross = (x, y, rad, color) => {
+    ctx.setLineDash([]);
+    for (const [w, s] of [[3 * px, 'rgba(0,0,0,.55)'], [1.3 * px, color]]) {
+      ctx.lineWidth = w; ctx.strokeStyle = s;
+      ctx.beginPath();
+      ctx.moveTo(x - rad, y); ctx.lineTo(x + rad, y);
+      ctx.moveTo(x, y - rad); ctx.lineTo(x, y + rad);
+      ctx.stroke();
+    }
+  };
+  if (c.tool === 'clone' || c.tool === 'heal') {
+    // No source yet (or Alt held): the pointer reads as a target reticle — "click HERE to pick".
+    if (c.picking) {
+      ring(c.x, c.y, r, '#d4ff45');
+      cross(c.x, c.y, r + 7 * px, '#d4ff45');
+    } else {
+      ring(c.x, c.y, r, '#ffffff');
+    }
+    // The anchored source: a crosshair-in-a-circle pin, exactly where Alt was clicked.
+    if (c.src) {
+      const pin = 9 * px;
+      ring(c.src.x, c.src.y, pin, '#d4ff45');
+      cross(c.src.x, c.src.y, pin * 1.7, '#d4ff45');
+    }
+    return;
+  }
+  ring(c.x, c.y, r, '#ffffff');
+};
+/* Gradient axis while dragging — the Figma/Illustrator gradient handle: a thin white line from the
+   first stop to the last, a small round nub sitting ON the line at every stop, and a colour-filled
+   square swatch floating just off the line for each one, so you read the ramp's direction, length
+   and actual colours from the canvas itself. The first stop's swatch is accented to mark the
+   gradient's origin. A radial gradient adds the circle its falloff sweeps.
+   Handles are drawn UNROTATED (square swatches stay axis-aligned like Figma's) but offset
+   perpendicular to the axis, which is what gives the "flag on a line" look. */
+const drawGradientAxis = (ctx, g, z) => {
+  const px = 1 / z;
+  const dx = g.to.x - g.from.x, dy = g.to.y - g.from.y;
+  const len = Math.hypot(dx, dy);
+  if (g.type === 'radial' && len > 0.5) {
+    ctx.setLineDash([5 * px, 4 * px]);
+    ctx.lineWidth = 2.4 * px; ctx.strokeStyle = 'rgba(0,0,0,.45)';
+    ctx.beginPath(); ctx.arc(g.from.x, g.from.y, len, 0, 7); ctx.stroke();
+    ctx.lineWidth = 1 * px; ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(g.from.x, g.from.y, len, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.setLineDash([]);
+  ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath(); ctx.moveTo(g.from.x, g.from.y); ctx.lineTo(g.to.x, g.to.y); ctx.stroke();
+  ctx.lineWidth = 1.5 * px; ctx.strokeStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(g.from.x, g.from.y); ctx.lineTo(g.to.x, g.to.y); ctx.stroke();
+  if (len < 1) return;
+  // Unit vector along the axis, and its perpendicular — the swatch sits `off` px to the side.
+  const nx = -dy / len, ny = dx / len;   // unit perpendicular: the swatch offset direction
+  const nub = 3.4 * px, half = 9 * px, off = 22 * px;
+  const stops = (g.stops && g.stops.length) ? g.stops : [{ offset: 0, color: '#ffffff' }, { offset: 1, color: '#000000' }];
+  stops.forEach((s, i) => {
+    const t = Math.max(0, Math.min(1, s.offset));
+    const px0 = g.from.x + dx * t, py0 = g.from.y + dy * t;
+    const sx = px0 + nx * off, sy = py0 + ny * off;
+    // Stem from the nub out to the swatch.
+    ctx.lineWidth = 1.2 * px; ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.moveTo(px0, py0); ctx.lineTo(sx, sy); ctx.stroke();
+    // The colour swatch: the stop's own colour, ringed by a border that sits OUTSIDE the fill
+    // (a centred stroke would eat inward and swallow most of a small swatch's colour). The first
+    // stop is accented so the ramp's start is obvious at a glance.
+    // A stop's swatch sits directly on top of the very colour it describes, so a plain coloured
+    // square would vanish into the ramp. A white card under the colour plus a dark hairline OUTSIDE
+    // the white border keeps the handle readable over any part of any gradient.
+    const bw = 2.2 * px, ob = half + bw / 2, ob2 = half + bw + 0.5 * px;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(sx - half, sy - half, half * 2, half * 2);
+    ctx.fillStyle = s.color;
+    const inset = 2.6 * px;   // white margin left showing around the colour chip, Figma-style
+    ctx.fillRect(sx - half + inset, sy - half + inset, (half - inset) * 2, (half - inset) * 2);
+    ctx.lineWidth = bw; ctx.strokeStyle = i === 0 ? '#2f8bff' : '#ffffff';
+    ctx.strokeRect(sx - ob, sy - ob, ob * 2, ob * 2);
+    ctx.lineWidth = 1 * px; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    ctx.strokeRect(sx - ob2, sy - ob2, ob2 * 2, ob2 * 2);
+    // The nub anchoring the stop to the axis.
+    ctx.beginPath(); ctx.arc(px0, py0, nub, 0, 7);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.lineWidth = 1.2 * px; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
+  });
+};
+let gradAxis = null;
+let brushCursor = null;
 let hoverPreview = null;
 let dragGuides = null;
 let penBuild = null;
@@ -982,6 +1262,8 @@ ed.on('selection', () => { ed.fc.requestRenderAll(); startAntsLoopIfNeeded(); })
 ed.on('crop', () => ed.fc.requestRenderAll());
 ed.on('hover', h => { hoverPreview = h; ed.fc.requestRenderAll(); });
 ed.on('pen', build => { penBuild = build; ed.fc.requestRenderAll(); });
+ed.on('brushcursor', c => { brushCursor = c; ed.fc.requestRenderAll(); });
+ed.on('gradientaxis', g => { gradAxis = g; ed.fc.requestRenderAll(); });
 
 /* ── marching ants: the selection outline's dashes visibly crawl, matching the reference editor's
    animated marquee — only ticks while a selection actually exists (requestRenderAll is cheap but
@@ -1021,7 +1303,7 @@ const TOOL_LABELS = {
   aiinsert: 'AI insert',
 };
 const TOOL_HINTS = {
-  select: 'Click a layer on the canvas, or drag to move the selected layer.',
+  select: 'Click any layer directly on the artboard or drag a bounding marquee to transform.',
   crop: 'Drag the handles, then Apply crop in the top bar.',
   'lasso-poly': 'Click to place points; click near the start (or press Enter) to close, Escape to cancel.',
   'lasso-mag': 'Click to place points that snap to nearby edges; Enter closes, Escape cancels.',
@@ -1032,6 +1314,8 @@ const TOOL_HINTS = {
   magicwand: 'Click an object to grab it (OpenCV-assisted). Shift-click adds, Alt-click subtracts, re-click cycles overlapping objects.',
   pen: 'Click to place points; click near the start (or press Enter) to close into a filled shape, Escape to cancel.',
   aiinsert: 'AI insert · click a spot to draw there — or make a selection first and click inside it: the AI fills exactly that shape',
+  clone: 'Alt-click (⌥) or Shift-click (⇧) to set the source point, then paint elsewhere to stamp those pixels. Click again with either to re-source.',
+  heal: 'Alt-click (⌥) or Shift-click (⇧) to set the source point, then paint over the blemish — the patch is blended into its surroundings.',
 };
 const TOOLGROUPS = [
   [{ id: 'select', icon: 'select' }, { id: 'hand', icon: 'hand' }],
@@ -1093,7 +1377,18 @@ function renderRail() {
     wrap.innerHTML = `<button class="rail-btn" data-on="${on}" data-gi="${gi}">${iconSVG(shown.icon, 18)}${tools.length > 1 ? '<span class="rail-caret"></span>' : ''}</button>`;
     const btn = wrap.querySelector('.rail-btn');
     const shownLabel = (TOOL_LABELS[shown.id] || shown.id) + (TOOL_SHORTCUT[shown.id] ? '  (' + TOOL_SHORTCUT[shown.id] + ')' : '');
-    btn.addEventListener('mouseenter', () => showTip(btn, shownLabel));
+    /* The rail buttons are icon-only, so the tooltip text is ALSO their accessible name — without
+       it a screen reader announces "button" thirteen times and the whole toolbar is unusable.
+       aria-pressed carries the data-on highlight (which tool is active) to assistive tech, and a
+       multi-tool group additionally reports that clicking it opens the flyout. */
+    /* Say out loud that a slot has alternates. The caret alone is a 5px triangle; on hover the
+       user is already reading the tooltip, so that is the cheapest place to make the hidden
+       tools discoverable instead of relying on someone noticing the marker. */
+    const tipText = tools.length > 1 ? shownLabel + '  \u00b7  click for ' + (tools.length - 1) + ' more' : shownLabel;
+    btn.setAttribute('aria-label', shownLabel);
+    btn.setAttribute('aria-pressed', String(on));
+    if (tools.length > 1) btn.setAttribute('aria-expanded', String(flyoutGroup === gi));
+    btn.addEventListener('mouseenter', () => showTip(btn, tipText));
     btn.addEventListener('mouseleave', hideTip);
     btn.addEventListener('click', () => {
       hideTip();
@@ -1103,7 +1398,17 @@ function renderRail() {
     if (flyoutGroup === gi) {
       const fly = document.createElement('div');
       fly.className = 'rail-flyout';
-      fly.innerHTML = tools.map(t => `<div class="rail-flyout-item" data-on="${t.id === ed.tool}" data-tool="${t.id}">${iconSVG(t.icon, 15)}<span style="flex:1">${TOOL_LABELS[t.id] || t.id}</span>${TOOL_SHORTCUT[t.id] ? `<span class="sc">${TOOL_SHORTCUT[t.id]}</span>` : ''}</div>`).join('');
+      /* role/tabindex/aria-checked: these are <div>s doing a menu's job, so without them a
+         keyboard or screen-reader user can't reach the non-primary tools at all — they exist
+         only behind this flyout. The visible text label doubles as the accessible name. */
+      fly.setAttribute('role', 'menu');
+      fly.innerHTML = tools.map(t => `<div class="rail-flyout-item" role="menuitemradio" tabindex="0" aria-checked="${t.id === ed.tool}" data-on="${t.id === ed.tool}" data-tool="${t.id}">${iconSVG(t.icon, 15)}<span style="flex:1">${TOOL_LABELS[t.id] || t.id}</span>${TOOL_SHORTCUT[t.id] ? `<span class="sc">${TOOL_SHORTCUT[t.id]}</span>` : ''}</div>`).join('');
+      // Enter/Space must activate a menu item the same way a click does.
+      fly.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const t = e.target.closest('[data-tool]')?.dataset.tool;
+        if (t) { e.preventDefault(); ed.setTool(t); flyoutGroup = -1; renderRail(); }
+      });
       fly.addEventListener('mouseleave', () => { flyoutGroup = -1; renderRail(); });
       fly.addEventListener('click', e => { const t = e.target.closest('[data-tool]')?.dataset.tool; if (t) { ed.setTool(t); flyoutGroup = -1; renderRail(); } });
       wrap.appendChild(fly);
@@ -1142,13 +1447,42 @@ function penBtns(on) {
   wrap.querySelector('#pen-finish').onclick = () => ed.finishPen();
   wrap.querySelector('#pen-cancel').onclick = () => ed.cancelPen();
 }
+/* Clone/heal's hint is stateful: "pick a source" until one is set, then "now paint" — the single
+   biggest thing missing when the tool was just a bare crosshair. */
+function refreshToolHint() {
+  const t = ed.tool, src = ed.cloneSource, isClone = t === 'clone' || t === 'heal';
+  let hint = TOOL_HINTS[t] || 'Drag on the canvas to use this tool.';
+  if (isClone && src) {
+    hint = 'Source set at ' + Math.round(src.x) + ', ' + Math.round(src.y) + ' — now paint to '
+      + (t === 'heal' ? 'heal with' : 'stamp') + ' those pixels. ⌥/⇧-click to re-source.';
+  }
+  document.getElementById('tool-hint').textContent = hint;
+  // Destructive-vs-new-layer applies to every pixel tool, not just clone/heal.
+  const onNew = !!ed.toolOpts.paintNewLayer;
+  document.getElementById('paint-target-section').style.display = PAINT_TOOLS.includes(t) ? '' : 'none';
+  document.getElementById('paint-new-layer').checked = onNew;
+  document.getElementById('paint-target-note').textContent = onNew
+    ? 'Strokes go to a separate paint layer — the original image is left untouched.'
+    : 'Editing the image itself (the selected layer, or the top image), at its own resolution.';
+  document.getElementById('clone-section').style.display = isClone ? '' : 'none';
+  if (!isClone) return;
+  document.getElementById('clone-title').textContent = t === 'heal' ? 'Healing brush' : 'Clone stamp';
+  document.getElementById('clone-status').textContent = src
+    ? 'Source set at ' + Math.round(src.x) + ', ' + Math.round(src.y) + ' — now paint to ' + (t === 'heal' ? 'heal with' : 'stamp') + ' those pixels.'
+    : 'Step 1 — hold ⌥ (Alt) or ⇧ (Shift) and click the area you want to copy FROM.';
+  document.getElementById('clone-reset').disabled = !src;
+}
+ed.on('clonesource', refreshToolHint);
+ed.on('tooloptions', refreshToolHint);
+document.getElementById('clone-reset').onclick = () => ed.clearCloneSource();
+document.getElementById('paint-new-layer').onchange = e => ed.setToolOptions({ paintNewLayer: e.target.checked });
 ed.on('tool', t => {
   renderRail();
   cropBtn(t === 'crop');
   penBtns(t === 'pen');
   document.getElementById('tool-icon').innerHTML = iconSVG(t);
-  document.getElementById('tool-name').textContent = t;
-  document.getElementById('tool-hint').textContent = TOOL_HINTS[t] || 'Drag on the canvas to use this tool.';
+  document.getElementById('tool-name').textContent = t === 'select' ? 'Select & Transform' : (TOOL_LABELS[t] || t);
+  refreshToolHint();
   document.getElementById('gradient-section').style.display = t === 'gradient' ? '' : 'none';
   document.getElementById('objselect-section').style.display = (t === 'objectselect' || t === 'hoverselect' || t === 'magicwand') ? '' : 'none';
 });
@@ -1177,7 +1511,11 @@ function refreshObjselectStatus() {
 objselectAddBtn.onclick = () => { ed.setToolOptions({ addMode: !ed.toolOpts.addMode }); refreshObjselectStatus(); };
 objselectTolerance.oninput = () => ed.setToolOptions({ tolerance: +objselectTolerance.value });
 ed.on('tooloptions', refreshObjselectStatus);
-ed.on('selection', refreshObjselectStatus);
+/* A completed pick ends the busy state. Without clearing the flag here the status sat on
+   "Finding object…" for the full 4s safety timeout after every successful magicwand click —
+   the tool had already selected the object, so a working tool read as a stuck one. ('hover'
+   below covers objectselect/hoverselect, which also emit hover; magicwand never does.) */
+ed.on('selection', () => { objselectBusy = false; refreshObjselectStatus(); });
 ed.on('tool', refreshObjselectStatus);
 ed.on('hover', () => { if (objselectBusy) { objselectBusy = false; refreshObjselectStatus(); } });
 // wandPick/_hoverMove don't currently emit a busy/idle event of their own — approximate "busy" as
@@ -1243,7 +1581,11 @@ function cropBtn(on) {
   if (on) {
     const ratios = document.createElement('div');
     ratios.id = 'crop-ratios';
-    ratios.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px';
+    // Bottom border/padding stand in for the .grp divider the CROP header below would normally
+    // draw itself — that header's inline style zeroes its own top spacing on the assumption it's
+    // #tool-panel's first child, which is only true when this chip row and Apply-crop button
+    // aren't prepended in front of it (i.e. every OTHER tool).
+    ratios.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line-soft)';
     ratios.innerHTML = CROP_RATIOS.map(([label]) => `<button class="chip" data-label="${label}">${label}</button>`).join('');
     const syncRatioChips = () => {
       const cur = ed.toolOpts.cropRatio || 0;
@@ -1262,7 +1604,7 @@ function cropBtn(on) {
     syncRatioChips();
     document.getElementById('tool-panel').prepend(ratios);
     const b = document.createElement('button');
-    b.id = 'applycrop'; b.className = 'act'; b.innerHTML = '✓ Apply crop';
+    b.id = 'applycrop'; b.className = 'act'; b.style.marginBottom = '8px'; b.innerHTML = '✓ Apply crop';
     b.onclick = () => ed.applyCrop();
     document.getElementById('tool-panel').prepend(b);
   } else {
@@ -1270,11 +1612,48 @@ function cropBtn(on) {
   }
 }
 
-/* ── options / history / export ────────────────────────────────────── */
-size.oninput = e => ed.setToolOptions({ size: +e.target.value });
-op.oninput = e => ed.setToolOptions({ opacity: +e.target.value });
-col.oninput = e => ed.setToolOptions({ color: e.target.value, fill: e.target.value });
-ed.on('tooloptions', o => { col.value = /^#([0-9a-f]{6})$/i.test(o.color) ? o.color : col.value; });
+/* ── brush options (Size/Soft/Opacity/Color) — live in the Tool panel, not the header, and only
+   show for tools that actually read them: PAINT_TOOLS use all four; bucket/shapes/type only ever
+   read toolOpts.fill/color (their initial fill), so they get the color row without the sliders. */
+const brushSection = document.getElementById('brush-section');
+const brushSizeRow = document.getElementById('brush-size-row'), brushSoftRow = document.getElementById('brush-soft-row'), brushOpacityRow = document.getElementById('brush-opacity-row');
+const brushSize = document.getElementById('brush-size'), brushSoft = document.getElementById('brush-soft'), brushOpacity = document.getElementById('brush-opacity'), brushColor = document.getElementById('brush-color');
+const brushSizeVal = document.getElementById('brush-size-val'), brushSoftVal = document.getElementById('brush-soft-val'), brushOpacityVal = document.getElementById('brush-opacity-val');
+const COLOR_TOOLS = [...PAINT_TOOLS, 'bucket', ...SHAPE_TOOLS, 'type'];
+brushSize.oninput = () => { ed.setToolOptions({ size: +brushSize.value }); brushSizeVal.textContent = brushSize.value; };
+// "Soft" is the inverse of the engine's hardness (0 hardness = fully soft edge) — same knob, UI convention flipped to read as "how soft is this brush" instead of "how hard".
+brushSoft.oninput = () => { ed.setToolOptions({ hardness: 1 - (+brushSoft.value / 100) }); brushSoftVal.textContent = brushSoft.value + '%'; };
+brushOpacity.oninput = () => { ed.setToolOptions({ opacity: +brushOpacity.value / 100 }); brushOpacityVal.textContent = brushOpacity.value + '%'; };
+brushColor.oninput = () => { ed.setToolOptions({ color: brushColor.value, fill: brushColor.value }); refreshSwatchSelection(); };
+const BRUSH_SWATCHES = ['#ffffff', '#000000', '#4f8ff0', '#d76b8f', '#d4ff45', '#ef6a2d'];
+const brushSwatchesEl = document.getElementById('brush-swatches');
+brushSwatchesEl.innerHTML = BRUSH_SWATCHES.map(c => `<button class="swatch-btn" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('');
+function refreshSwatchSelection() {
+  brushSwatchesEl.querySelectorAll('.swatch-btn').forEach(b => { b.dataset.on = String(b.dataset.color.toLowerCase() === (ed.toolOpts.color || '').toLowerCase()); });
+}
+brushSwatchesEl.addEventListener('click', e => {
+  const c = e.target.closest('[data-color]')?.dataset.color; if (!c) return;
+  ed.setToolOptions({ color: c, fill: c });
+  brushColor.value = c;
+  refreshSwatchSelection();
+});
+ed.on('tooloptions', o => {
+  brushColor.value = /^#([0-9a-f]{6})$/i.test(o.color) ? o.color : brushColor.value;
+  brushSize.value = o.size; brushSizeVal.textContent = o.size;
+  brushSoft.value = Math.round((1 - (o.hardness != null ? o.hardness : 0.7)) * 100); brushSoftVal.textContent = brushSoft.value + '%';
+  brushOpacity.value = Math.round(o.opacity * 100); brushOpacityVal.textContent = brushOpacity.value + '%';
+  [brushSize, brushSoft, brushOpacity].forEach(paintRangeFill);
+  refreshSwatchSelection();
+});
+const brushSectionLabel = document.getElementById('brush-section-label');
+ed.on('tool', t => {
+  const isPaint = PAINT_TOOLS.includes(t);
+  brushSection.style.display = COLOR_TOOLS.includes(t) ? '' : 'none';
+  [brushSizeRow, brushSoftRow, brushOpacityRow].forEach(row => row.style.display = isPaint ? '' : 'none');
+  brushSectionLabel.textContent = isPaint ? 'Brush' : 'Color';
+});
+ed._emit('tool', ed.tool);              // initial paint of the brush section's visibility
+ed._emit('tooloptions', ed.toolOpts);   // initial paint of the brush section's values
 undo.innerHTML = iconSVG('undo'); redo.innerHTML = iconSVG('redo');
 undo.onclick = () => ed.undo(); redo.onclick = () => ed.redo();
 ed.on('history', h => { undo.disabled = h.past < 2; redo.disabled = !h.future; });
@@ -1369,8 +1748,83 @@ document.getElementById('cs-apply').onclick = () => {
 document.addEventListener('click', e => {
   if (!csPop.hidden && !csPop.contains(e.target) && e.target !== csBtn) csPop.hidden = true;
 });
-png.onclick = () => { const a = document.createElement('a'); a.href = ed.exportPNG(); a.download = 'canvasmith.png'; a.click(); };
-jpg.onclick = () => { const a = document.createElement('a'); a.href = ed.exportJPEG(); a.download = 'canvasmith.jpg'; a.click(); };
+/* ── export image: one button, a small dropdown for the format (PNG/JPG/SVG) ─────────────── */
+const exportBtn = document.getElementById('export-btn'), exportMenu = document.getElementById('export-menu');
+document.getElementById('export-caret').innerHTML = iconSVG('chevron', 10);
+document.getElementById('export-caret').firstChild.style.transform = 'rotate(-90deg)';
+/* Export scale. The core has always supported a multiplier (Editor#exportPNG(mult)) but the UI
+   hardcoded 1x, so every export came out at artboard size — soft on retina, unusable for print,
+   with nothing on screen explaining why. The picker exposes the capability that already exists;
+   SVG ignores it (vector output has no pixel scale to pick). */
+let exportScale = 1;
+const dl = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
+const scaleSuffix = () => (exportScale === 1 ? '' : '@' + exportScale + 'x');
+const EXPORTERS = {
+  png: () => dl(ed.exportPNG(exportScale), `canvasmith${scaleSuffix()}.png`),
+  jpg: () => dl(ed.exportJPEG(0.92, exportScale), `canvasmith${scaleSuffix()}.jpg`),
+  svg: () => {
+    const blob = new Blob([ed.exportSVG()], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    dl(url, 'canvasmith.svg');
+    URL.revokeObjectURL(url);
+  },
+  /* Save the editable document itself. PNG/JPG/SVG are all flattened or lossy, so before this
+     there was no way to get layers, masks and adjustments out of the browser at all — no backup,
+     no moving machines, no handing the file to someone else. */
+  project: () => {
+    const blob = new Blob([exportProject(ed, { assets })], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    dl(url, 'canvasmith-project.canvasmith');
+    URL.revokeObjectURL(url);
+  },
+};
+const exportDims = document.getElementById('export-dims');
+function refreshExportDims() {
+  exportDims.textContent = Math.round(ed.W * exportScale) + ' \u00d7 ' + Math.round(ed.H * exportScale) + ' px';
+}
+const setExportMenuOpen = open => { exportMenu.hidden = !open; exportBtn.dataset.open = String(open); if (open) refreshExportDims(); };
+exportBtn.onclick = () => setExportMenuOpen(exportMenu.hidden);
+document.getElementById('export-scale').addEventListener('click', e => {
+  const b = e.target.closest('[data-scale]'); if (!b) return;
+  exportScale = +b.dataset.scale;
+  [...e.currentTarget.children].forEach(c => { c.dataset.on = String(c === b); });
+  refreshExportDims();
+});
+exportMenu.addEventListener('click', e => {
+  if (e.target.closest('[data-scale]')) return;                 // the size picker is not a download
+  if (e.target.closest('#open-project')) { projectInput.click(); setExportMenuOpen(false); return; }
+  const format = e.target.closest('[data-format]')?.dataset.format;
+  if (format) { EXPORTERS[format](); setExportMenuOpen(false); }
+});
+/* Opening a project replaces the whole document, so it warns when there's unsaved work to lose
+   — same bargain as New, which is the other action that can discard a document. */
+const projectInput = document.createElement('input');
+projectInput.type = 'file';
+projectInput.accept = '.canvasmith,application/json';
+projectInput.hidden = true;
+document.body.appendChild(projectInput);
+projectInput.onchange = () => {
+  const f = projectInput.files[0]; if (!f) return;
+  projectInput.value = '';                                       // re-picking the same file must re-fire
+  if (ed.fc.getObjects().length && !confirm('Open this project?\n\nIt replaces the current document.')) return;
+  const r = new FileReader();
+  r.onload = async () => {
+    try {
+      const extras = await loadProject(ed, r.result);
+      if (Array.isArray(extras.assets)) { assets = extras.assets; renderAssets(); }
+      if (extras.compare) { _compareSnapshot = extras.compare; compareBtn.disabled = false; }
+      fitToScreen();
+      toast('Project opened');
+    } catch (err) {
+      // parseProject throws messages written for the user — show them rather than a console trace.
+      alert(err.message || 'Could not open that project.');
+    }
+  };
+  r.readAsText(f);
+};
+document.addEventListener('click', e => {
+  if (!exportMenu.hidden && !exportMenu.contains(e.target) && e.target !== exportBtn && !exportBtn.contains(e.target)) setExportMenuOpen(false);
+});
 
 /* ── zoom pill + dimension badge ──────────────────────────────────────────────────────────
    Matches the reference editor's model exactly: fc's own DOM size always fills the STAGE
@@ -1422,7 +1876,6 @@ new ResizeObserver(() => {
 }).observe(stageEl);
 function refreshZoomUI() {
   zoomPctBtn.textContent = Math.round((ed.fc.getZoom() || 1) * 100) + '%';
-  document.getElementById('dim-badge').textContent = ed.W + '×' + ed.H;
 }
 document.getElementById('zoom-out').onclick = () => setZoomAtCenter(ed.fc.getZoom() * 0.83);
 document.getElementById('zoom-in').onclick = () => setZoomAtCenter(ed.fc.getZoom() * 1.2);
@@ -1439,34 +1892,13 @@ document.addEventListener('keydown', e => {
   else if (e.key === '-') { e.preventDefault(); setZoomAtCenter(ed.fc.getZoom() * 0.83); }
   else if (e.key === '0') { e.preventDefault(); fitToScreen(); }
 });
-svg.onclick = () => {
-  const blob = new Blob([ed.exportSVG()], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'canvasmith.svg'; a.click();
-  URL.revokeObjectURL(url);
-};
 
 /* ── sidebar tabs + collapse ──────────────────────────────────────────────────────────────
-   Two independent tab bars, matching the reference editor's split: LEFT keeps Tool/Layers (the
-   active tool's options, and the layer list) so they stay next to the canvas at all times; RIGHT
-   holds Layer(=Properties)/Design/Stickers/AI — everything that's about WHAT you're adding or
-   editing rather than HOW you're interacting with the canvas right now. */
-const leftTabBtns = document.querySelectorAll('#left-tabs button');
-leftTabBtns[0].innerHTML = iconSVG('tool') + '<span>Tool</span>';
-leftTabBtns[1].innerHTML = iconSVG('layerstab') + '<span>Layers</span>';
-const LEFT_TAB_PANELS = { tool: 'tool-panel', layers: 'layers-panel' };
-document.getElementById('left-tabs').addEventListener('click', e => {
-  const btn = e.target.closest('button'); if (!btn) return;
-  const tab = btn.dataset.tab;
-  leftTabBtns.forEach(b => b.dataset.on = String(b === btn));
-  Object.entries(LEFT_TAB_PANELS).forEach(([t, id]) => {
-    document.getElementById(id).style.display = t === tab ? (t === 'tool' ? '' : 'flex') : 'none';
-  });
-  refreshLeftScrollCue();
-});
-
+   LEFT is the layer list above the active tool's own options/hints (no tabs). RIGHT holds
+   Properties/Design/Stickers/AI — everything that's about WHAT you're adding or editing rather
+   than HOW you're interacting with the canvas right now (the layer list itself sits on the left). */
 const rightTabBtns = document.querySelectorAll('#right-tabs button');
-rightTabBtns[0].innerHTML = iconSVG('layerstab') + '<span>Layer</span>';
+rightTabBtns[0].innerHTML = iconSVG('tool') + '<span>Properties</span>';
 rightTabBtns[1].innerHTML = iconSVG('palette') + '<span>Design</span>';
 rightTabBtns[2].innerHTML = iconSVG('star') + '<span>Stickers</span>';
 rightTabBtns[3].innerHTML = iconSVG('spark') + '<span>AI</span>';
@@ -1518,13 +1950,19 @@ document.addEventListener('keydown', e => {
 });
 
 /* ── snap toggle, align, duplicate ────────────────────────────────────── */
+// Checkbox rows share one render: a tick icon fills the .box when data-on is true.
+document.querySelectorAll('.check-item .box').forEach(box => { box.innerHTML = iconSVG('check', 9); });
 const snapBtn = document.getElementById('snap-toggle');
 snapBtn.onclick = () => {
   const on = snapBtn.dataset.on !== 'true';
   snapBtn.dataset.on = String(on);
-  snapBtn.textContent = on ? 'Snap: on' : 'Snap: off';
   ed.setSnapEnabled(on);
 };
+// Auto-detect is cosmetic only for now — object detection stays a one-shot "AI Vision Engine"
+// action below (ed.detectObjects() has no ambient/always-on mode); this just mirrors the
+// reference layout's checkbox without inventing new editor behaviour.
+const autodetectBtn = document.getElementById('autodetect-toggle');
+autodetectBtn.onclick = () => { autodetectBtn.dataset.on = String(autodetectBtn.dataset.on !== 'true'); };
 const ALIGN_ICONS = { left: 'align-left', center: 'align-h-center', right: 'align-right', top: 'align-top', middle: 'align-v-center', bottom: 'align-bottom' };
 document.querySelectorAll('.align-grid button').forEach(btn => { btn.innerHTML = iconSVG(ALIGN_ICONS[btn.dataset.edge], 16); });
 document.querySelector('.align-grid').addEventListener('click', e => {
@@ -1534,6 +1972,13 @@ document.querySelector('.align-grid').addEventListener('click', e => {
 const dupBtn = document.getElementById('duplicate');
 dupBtn.innerHTML = iconSVG('duplicate') + '<span>Duplicate</span>';
 dupBtn.onclick = () => { const active = ed.layers().find(l => l.active); if (active) ed.duplicateLayer(active.id); };
+// Single "Flip H / V" button (matches the reference's compact Transform row): plain click flips
+// horizontally, shift-click flips vertically — same ed.flipLayer('x'|'y') the Properties panel's
+// separate Flip H/Flip V buttons already use, just two entry points onto one active layer.
+const toolFlipBtn = document.getElementById('tool-flip-hv');
+toolFlipBtn.innerHTML = iconSVG('flip', 13) + '<span>Flip H / V</span>';
+toolFlipBtn.title = 'Flip horizontal — shift-click to flip vertical';
+toolFlipBtn.onclick = e => ed.flipLayer(e.shiftKey ? 'y' : 'x');
 
 /* ── selection modify: expand/contract/similar (cv-backed — report status in the note line) ──
    This whole group acts on a pixel selection (marquee/lasso/wand) — not an object selection —
@@ -1553,7 +1998,8 @@ const showSelResult = r => { selMsg.textContent = r.status === 'ok' ? '' : (r.me
    a clickable candidate — clicking one commits it as a real rectangular selection (via
    selectDetectedBox), so the rest of the Selection group (expand/contract/similar/recolor) then
    works on it exactly as if it had been marquee-dragged. */
-const detectBtn = document.getElementById('sel-detect'); detectBtn.innerHTML = iconSVG('wand') + '<span>Detect objects</span>';
+const detectBtn = document.getElementById('sel-detect'); detectBtn.innerHTML = iconSVG('wand') + '<span>Auto-Detect Subjects</span>';
+document.getElementById('ai-vision-icon').innerHTML = iconSVG('spark', 13);
 const detectResults = document.getElementById('detect-results');
 detectBtn.onclick = async () => {
   detectResults.innerHTML = '';
@@ -1575,7 +2021,7 @@ const expBtn = document.getElementById('sel-expand'); expBtn.innerHTML = iconSVG
 const conBtn = document.getElementById('sel-contract'); conBtn.innerHTML = iconSVG('contract') + '<span>Contract</span>';
 expBtn.onclick = async () => showSelResult(await ed.expandSelection(6));
 conBtn.onclick = async () => showSelResult(await ed.contractSelection(6));
-const simBtn = document.getElementById('sel-similar'); simBtn.innerHTML = iconSVG('similar') + '<span>Select similar</span>';
+const simBtn = document.getElementById('sel-similar'); simBtn.innerHTML = iconSVG('similar') + '<span>Select Similar Colors</span>';
 simBtn.onclick = async () => showSelResult(await ed.selectSimilar());
 
 /* ── recolour the current selection (lightness-preserving, non-destructive) ───────────────── */
@@ -1759,7 +2205,7 @@ const fillSolidEl = document.getElementById('fill-solid'), fillGradientEl = docu
 const fgTypeLinear = document.getElementById('fg-type-linear'), fgTypeRadial = document.getElementById('fg-type-radial');
 const fgAngleRow = document.getElementById('fg-angle-row'), fgAngle = document.getElementById('fg-angle');
 const fgStopsEl = document.getElementById('fg-stops');
-let fgState = { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#ef6a2d' }, { offset: 1, color: '#7c3aed' }] };
+let fgState = { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#4f8ff0' }, { offset: 1, color: '#7c3aed' }] };
 function applyFgState() { ed.setShapeGradient(fgState.stops, fgState.type, fgState.angle); }
 function renderFgStops() {
   fgTypeLinear.dataset.on = String(fgState.type === 'linear');
@@ -2170,28 +2616,24 @@ stickerGridEl.addEventListener('click', e => {
 });
 renderStickerCats(); renderStickerGrid();
 
-/* ── "more below" scroll cues — see #left-scroll-cue's CSS comment for why these exist. Each
-   tracks whichever of ITS panel's tabs is the currently-visible scroll container (only one per
-   panel is ever display:flex/block at a time — see the two tab-switch handlers above) and shows
-   the cue only when that container is both actually scrollable AND not already scrolled to its
-   bottom. Left covers Tool/Layers; right covers Layer/Design/Stickers/AI. ── */
+/* ── "more below" scroll cues — see #left-scroll-cue's CSS comment for why these exist. Right
+   tracks whichever of its panel's tabs is the currently-visible scroll container (only one is
+   ever display:flex/block at a time — see the tab-switch handler above) and shows the cue only
+   when that container is both actually scrollable AND not already scrolled to its bottom. Left
+   is just the (untabbed) Tool panel now; right covers Layers/Design/Stickers/AI. ── */
 const leftScrollCue = document.getElementById('left-scroll-cue');
 leftScrollCue.innerHTML = iconSVG('chevronD', 15);
-const leftPanelIds = Object.values(LEFT_TAB_PANELS);
-function activeLeftPanel() {
-  return leftPanelIds.map(id => document.getElementById(id)).find(el => el.style.display !== 'none') || document.getElementById('tool-panel');
-}
+function activeLeftPanel() { return document.getElementById('tool-panel'); }
 function refreshLeftScrollCue() {
   const active = activeLeftPanel();
   const hasMore = active.scrollHeight - active.scrollTop - active.clientHeight > 4;
   leftScrollCue.dataset.show = String(hasMore);
 }
-leftPanelIds.forEach(id => document.getElementById(id).addEventListener('scroll', refreshLeftScrollCue));
+activeLeftPanel().addEventListener('scroll', refreshLeftScrollCue);
 leftScrollCue.addEventListener('click', () => {
   activeLeftPanel().scrollBy({ top: activeLeftPanel().clientHeight * 0.8, behavior: 'smooth' });
 });
 new ResizeObserver(refreshLeftScrollCue).observe(document.getElementById('left-panel'));
-document.getElementById('left-tabs').addEventListener('click', () => setTimeout(refreshLeftScrollCue, 0));
 ed.on('change', refreshLeftScrollCue);
 ed.on('tool', refreshLeftScrollCue);
 refreshLeftScrollCue();
@@ -2712,11 +3154,13 @@ openfile.onclick = () => { file.dataset.mode = 'open'; file.click(); };
    Every OTHER image entry point (sidebar "Add image" tool, asset tray, drag/drop) adds a layer
    that fits inside the CURRENT artboard instead — the canvas size never changes underneath you
    there, since those are inserting into an existing composition, not starting one. */
-/* ── asset tray: every image source added to the document this session, click or drag back in ──
-   Session-only (no localStorage) — a generic library has no "generated ad" / "product photo"
-   asset taxonomy of its own, so this tracks exactly what the user has actually brought into THIS
-   document rather than inventing categories. Deduped by src. */
-const assets = [];
+/* ── asset tray: every image source added to the document, click or drag back in ───────────
+   A generic library has no "generated ad" / "product photo" asset taxonomy of its own, so this
+   tracks exactly what the user has actually brought into THIS document rather than inventing
+   categories. Deduped by src. Persisted with the scene by the autosave block below (as part of
+   the same single stored record, not its own key — see session.js), so reopening the tab
+   brings the tray back alongside the document it belongs to; "New" clears both together. */
+let assets = [];
 const assetsEl = document.getElementById('assets-tray');
 function trackAsset(src, name) {
   if (assets.some(a => a.src === src)) return;
@@ -2767,7 +3211,122 @@ file.onchange = () => {
   r.readAsDataURL(f);
 };
 installDropImport(document.getElementById('stage'), src => { ed.addImage(src); trackAsset(src, 'Dropped image'); });
+/* Visible drop affordance (see #stage[data-dropping] above). dragenter/dragleave fire for every
+   child element the cursor crosses, so a plain enter/leave pair flickers — a depth counter is
+   the standard fix: only the outermost leave clears the state. Filtered to real FILE drags so
+   dragging a layer or an asset thumbnail doesn't light up the whole stage. */
+(() => {
+  const stage = document.getElementById('stage');
+  let depth = 0;
+  const isFileDrag = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  stage.addEventListener('dragenter', e => { if (!isFileDrag(e)) return; depth++; stage.dataset.dropping = 'true'; });
+  stage.addEventListener('dragleave', () => { if (depth && --depth === 0) delete stage.dataset.dropping; });
+  stage.addEventListener('drop', () => { depth = 0; delete stage.dataset.dropping; });
+  stage.addEventListener('dragover', e => { if (isFileDrag(e)) e.preventDefault(); });
+})();
 installBridge(src => { ed.addImage(src); trackAsset(src, 'Opened image'); });   // ?image= / #img= / postMessage / localStorage handoff
+
+/* ── session autosave: survive a refresh / tab close ──────────────────────────────────────
+   The scene is already fully described by ed.toJSON(); installAutosave just debounces that into
+   IndexedDB on 'change' and flushes on pagehide (IndexedDB, not localStorage — a single photo
+   blows the ~5MB localStorage budget; see session.js). getExtras folds the two other pieces of
+   session state (the asset tray and the Compare baseline) into the SAME write, so they can never
+   drift out of sync with the scene they belong to. See packages/core/src/session.js for the
+   quota-shedding behaviour — a document too big to autosave degrades to "not saved", never to a
+   broken editor. */
+const session = installAutosave(ed, {
+  getExtras: () => ({ assets, compare: _compareSnapshot }),
+  onStatus: s => { autosaveNote(s); },
+});
+
+/* One shared line of feedback in the header: the user needs to know when their work is NOT being
+   saved (storage blocked, or a document past even IndexedDB's quota), otherwise autosave is a promise the page
+   quietly breaks. 'ok-trimmed' still saved the scene — only the tray/compare thumbnails were shed
+   — so it reads as saved rather than as a failure. */
+const saveNote = document.getElementById('save-note');
+function autosaveNote(status) {
+  if (!saveNote) return;
+  if (status === 'failed' || status === 'unavailable') {
+    saveNote.textContent = status === 'unavailable' ? 'Not autosaved (storage blocked)' : 'Too large to autosave';
+    saveNote.dataset.warn = 'true';
+    saveNote.title = status === 'unavailable'
+      ? 'This browser is blocking local storage, so this document will not be restored if you close the tab.'
+      : 'This document is past the browser\u2019s local-storage budget, so it will not be restored if you close the tab. Export it to keep it.';
+  } else {
+    saveNote.textContent = 'Saved';
+    saveNote.dataset.warn = 'false';
+    saveNote.title = 'This document is autosaved in this browser and will be restored if you close the tab.';
+  }
+  saveNote.hidden = false;
+}
+
+/* Restore last session on boot. Deliberately NOT gated behind a "restore?" prompt: the promise
+   this feature makes is that closing the tab and coming back just works, and a modal on every
+   load undermines that — "New" is the one-click escape hatch. Restoring an empty document would
+   be indistinguishable from a fresh boot, so a session with no objects is skipped (and the
+   asset tray/compare baseline with it) to keep the first-run experience clean. */
+restoreSession(ed).then(extras => {
+  if (!extras) return;
+  if (Array.isArray(extras.assets) && extras.assets.length) { assets = extras.assets; renderAssets(); }
+  if (extras.compare) { _compareSnapshot = extras.compare; compareBtn.disabled = false; }
+  fitToScreen();
+});
+
+/* ── New: discard the current document ───────────────────────────────────────────
+   Confirmed first: Editor#reset() empties the undo stack by design (you must not be able to
+   Ctrl+Z back into a document you explicitly discarded), which makes this the one irreversible
+   action in the editor — and with autosave on, it also wipes the saved copy. A document that's
+   already empty has nothing to lose, so that case skips the prompt. */
+/* toast(message, actionLabel?, onAction?, ms?) — transient confirmation with an optional action.
+   The action button is the point: it gives destructive commands an after-the-fact way out,
+   which a pre-emptive confirm() cannot (people click through those on autopilot). */
+const toastWrap = document.getElementById('toast-wrap');
+function toast(message, actionLabel, onAction, ms = 4000) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<span></span>`;
+  el.firstChild.textContent = message;
+  let timer = setTimeout(() => el.remove(), ms);
+  if (actionLabel && onAction) {
+    const b = document.createElement('button');
+    b.textContent = actionLabel;
+    b.onclick = () => { clearTimeout(timer); el.remove(); onAction(); };
+    el.appendChild(b);
+    // Hovering pauses the countdown — the action is useless if it expires while being read.
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { timer = setTimeout(() => el.remove(), 2000); });
+  }
+  toastWrap.appendChild(el);
+  return el;
+}
+
+const newdocBtn = document.getElementById('newdoc');
+document.getElementById('newdoc-icon').innerHTML = iconSVG('plus', 15);
+newdocBtn.onclick = async () => {
+  const empty = !ed.fc.getObjects().length;
+  // An empty document has nothing to lose, so it neither warns nor leaves anything to undo.
+  if (empty) { ed.reset({ width: 960, height: 640 }); ed.setTool('select'); fitToScreen(); return; }
+  // Park the current document BEFORE clearing, so "Undo" below has something to bring back.
+  // This is what turns New from irreversible into recoverable: reset() empties the undo stack
+  // by design, so without this the only copy of the work is gone the instant it is clicked.
+  await session.saveNow();
+  const parked = await discardToTrash();
+  ed.reset({ width: 960, height: 640 });
+  assets = []; renderAssets();
+  _compareSnapshot = null; compareBtn.disabled = true;
+  await session.clear();
+  if (saveNote) saveNote.hidden = true;
+  ed.setTool('select');
+  fitToScreen();
+  if (!parked) return;
+  toast('Started a new document', 'Undo', async () => {
+    const extras = await restoreDiscarded(ed);
+    if (!extras) return;
+    if (Array.isArray(extras.assets) && extras.assets.length) { assets = extras.assets; renderAssets(); }
+    if (extras.compare) { _compareSnapshot = extras.compare; compareBtn.disabled = false; }
+    fitToScreen();
+  }, 12000);
+};
 
 /* ── AI box: free Gemini key flow ──────────────────────────────────── */
 const gem = new GeminiProvider();
@@ -3018,9 +3577,9 @@ function buildActionItems() {
     { group: 'Insert', icon: 'hoverselect', label: 'Add badge', run: () => document.getElementById('add-badge').click() },
     { group: 'Insert', icon: 'tag', label: 'Add price', run: () => document.getElementById('add-price').click() },
     { group: 'Insert', icon: 'box', label: 'Add brand lockup', run: () => document.getElementById('add-brand').click() },
-    { group: 'Export', icon: 'svg', label: 'Export PNG', run: () => png.click() },
-    { group: 'Export', icon: 'svg', label: 'Export JPG', run: () => jpg.click() },
-    { group: 'Export', icon: 'svg', label: 'Export SVG', run: () => svg.click() },
+    { group: 'Export', icon: 'svg', label: 'Export PNG', run: () => EXPORTERS.png() },
+    { group: 'Export', icon: 'svg', label: 'Export JPG', run: () => EXPORTERS.jpg() },
+    { group: 'Export', icon: 'svg', label: 'Export SVG', run: () => EXPORTERS.svg() },
   ];
 }
 let cmdkItems = [], cmdkIdx = 0;
@@ -3061,6 +3620,36 @@ cmdkBackdrop.addEventListener('click', e => { if (e.target === cmdkBackdrop) cmd
 document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); cmdkOpen(); }
 });
+
+/* ── accessible names for icon-only controls ─────────────────────────────────────────
+   Most of this editor's buttons are a bare icon plus a `title`. A title is a MOUSE affordance:
+   screen readers treat it as a last-resort fallback (and several ignore it outright when the
+   element has no other name), so undo/redo, the zoom pill, stacking, alignment and the colour
+   swatches all announce as an unlabelled "button". The icons themselves are already
+   aria-hidden (see iconSVG), which is correct — but it leaves nothing behind to announce.
+
+   Rather than hand-write 37 duplicate strings that would drift from their titles, this derives
+   the accessible name from the title that's already there and already maintained. Buttons with
+   real text, or an aria-label authored on the spot (the tool rail, where the name differs from
+   the tooltip), are left alone.
+
+   A MutationObserver keeps it applied: the rail, the layers list, the sticker tray and the
+   gradient stops are all re-rendered from JS, so a one-shot pass at boot would cover only the
+   buttons that happen to exist at that moment. */
+function labelIconButtons(root = document) {
+  root.querySelectorAll('button[title]:not([aria-label]), [role="button"][title]:not([aria-label])').forEach(el => {
+    if ((el.textContent || '').trim()) return;          // already has a visible name
+    const t = el.getAttribute('title');
+    if (t) el.setAttribute('aria-label', t);
+  });
+}
+labelIconButtons();
+new MutationObserver(muts => {
+  for (const m of muts) {
+    if (m.type === 'attributes') { labelIconButtons(m.target.parentNode || document); continue; }
+    m.addedNodes.forEach(n => { if (n.nodeType === 1) labelIconButtons(n.matches?.('button') ? n.parentNode : n); });
+  }
+}).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
 </script>
 </body>
 </html>

@@ -17,6 +17,9 @@ export { buildLayerFromSpec, buildPromoLayout, scrimFill } from './templates.js'
 export { getCropHandle, dragCropRect, applyCrop } from './crop.js';
 export { alignDelta, snapDelta } from './layout.js';
 export { EXTRA, serialize, restore, exportImage, addImageLayer, artboardForImage, loadImageEl } from './io.js';
+export { installAutosave, restoreSession, readSession, writeSession, clearSession, SESSION_KEY,
+  discardToTrash, readDiscarded, clearDiscarded, restoreDiscarded, TRASH_KEY,
+  exportProject, parseProject, loadProject } from './session.js';
 export { selectionClipObject, renderSelectedPixels } from './pixels.js';
 export { AIRegistry, CAPABILITIES } from './ai/registry.js';
 export { GeminiProvider } from './ai/gemini.js';

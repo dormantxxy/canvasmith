@@ -30,6 +30,14 @@ import { makeCTA, makeBadge, makePrice, makeBrandLockup } from './adtext.js';
 import { buildPromoLayout, buildLayerFromSpec } from './templates.js';
 
 export const SEL_TOOLS = ['marquee', 'marquee-ellipse', 'lasso', 'lasso-poly', 'lasso-mag', 'wand', 'objectselect-bbox', 'magicwand', 'objectselect', 'hoverselect'];
+/* Default wand/object-select tolerance. Was 32, which is fine on flat synthetic colour but
+   measurably WRONG on photographs: a soft-edged, noisy subject came back ~22-28% smaller than
+   the object on every side, so the wand visibly cut inside the thing the user clicked.
+   Photographic edges are gradients, and a low tolerance stops at the first shading step.
+   Measured across 600/800/1000/1200/1598px images (subject = 48% of width), error vs. the true
+   subject size: tol 32 ~-37%, tol 48 ~-22%, tol 64 within 1% at EVERY size. Flat synthetic
+   shapes stay within 2% at all of these, so raising it costs nothing on the easy case.
+   Scrub with [ and ] or the Tolerance slider. */
 export const SHAPE_TOOLS = ['rect', 'ellipse', 'line', 'triangle', 'polygon', 'star'];
 export const ALL_TOOLS = ['select', 'hand', ...PAINT_TOOLS, ...SEL_TOOLS, ...SHAPE_TOOLS, 'type', 'bucket', 'gradient', 'eyedropper', 'crop', 'pen', 'aiinsert'];
 const CLICK_LASSOS = ['lasso-poly', 'lasso-mag'];
@@ -44,6 +52,19 @@ export const REGION_ROLE = { product: 'product', logo: 'logo', text: 'headline',
 export const REGION_COLOR = { product: '#d4ff45', logo: '#7cc4ff', text: '#ffd166', sticker: '#ff8fab', decorative: '#b794f6' };
 export const REGION_NAME = { product: 'Product', logo: 'Logo', text: 'Text', sticker: 'Sticker', decorative: 'Decoration' };
 const SEL_EPS = 0.0022;   // contour fidelity passed to the cv wand — smaller hugs the edge harder
+
+/* Snaps `to` onto the nearest 45° ray from `from` — the gradient tool's Shift-constrain, matching
+   Photoshop. Length is preserved (it's the projection onto the ray, not a bounding-box clamp), so
+   dragging at 44° and at 46° produce the same-length axis, just mirrored about the diagonal. */
+export function snapAxis(from, to, on) {
+  if (!on) return to;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (!len) return to;
+  const step = Math.PI / 4;
+  const a = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: from.x + Math.cos(a) * len, y: from.y + Math.sin(a) * len };
+}
 
 /* Local connected-component blob detection over `src` (a loaded <img> OR a <canvas>/other
    CanvasImageSource — detectObjects() passes engine.captureFlat()'s already-rendered <canvas>
@@ -130,6 +151,7 @@ export class Editor {
       controlsAboveOverlay: true,
     });
     this._voidColor = voidColor;   // see setVoidColor() / the off-canvas mask below
+    this._background = background; // the artboard's starting page colour — reset() paints it back after fc.clear() nulls it
     // fabric.Canvas's OWN _renderBackground paints fc.backgroundColor across (0,0)-(fc.width,
     // fc.height) — fc's own DOM size, i.e. the host's stage — not the artboard, so it paints the
     // wrong region entirely once those two diverge (see the W/H comment above: a small artboard
@@ -211,9 +233,10 @@ export class Editor {
     this.cv = new CvEngine(openCvUrl ? { openCvUrl } : undefined);
     this.tool = 'select';
     this.toolOpts = {
-      size: 30, opacity: 1, hardness: 0.7, color: '#ef6a2d', fill: '#ef6a2d', tolerance: 32, fontSize: 48, aligned: true,
+      size: 30, opacity: 1, hardness: 0.7, color: '#ef6a2d', fill: '#ef6a2d', tolerance: 64, fontSize: 48, aligned: true,
       gradientType: 'linear', gradientStops: [{ offset: 0, color: '#ef6a2d' }, { offset: 1, color: '#7c3aed' }],
       addMode: false,   // sticky "keep adding every click to the selection" toggle for wand/objectselect/hoverselect
+      paintNewLayer: false,   // paint tools retouch the image itself by default — see _bindPaintTarget
     };
     this.selection = null;
     this.crop = null;               // {x,y,w,h} while the crop tool is live
@@ -236,6 +259,8 @@ export class Editor {
     this._maskEdit = null;           // {layerId} while a mask is being painted — see enterMaskEdit()
     this._maskDrag = null;
     this._lastActiveId = null;      // last non-bg object the user selected/moved — see selectActiveOrCenter()
+    this._cropTarget = null;        // id of the image being cropped, when crop is scoped to one layer — see setTool('crop')/applyCrop()
+    this._cropRestore = null;       // pre-expand {id,left,top,cropX,cropY,width,height} to undo the "show full image" expand on cancel — see setTool('crop')/_restoreCropTarget()
     this._spaceDown = false;        // true while the spacebar is held — see _bindSpacePan()
     this._bindPointer();
     this._bindModified();
@@ -270,10 +295,46 @@ export class Editor {
     this.tool = t;
     const drawing = t !== 'select';
     this.fc.selection = !drawing;
-    this.fc.defaultCursor = t === 'hand' ? 'grab' : t === 'type' ? 'text' : drawing ? 'crosshair' : 'default';
+    this.fc.defaultCursor = this._cursorForTool(t);
     this.fc.getObjects().forEach(o => { o.selectable = !drawing && !o.locked; o.evented = !drawing && !o.locked; });
-    if (t === 'crop') this.crop = { x: this.W * 0.1, y: this.H * 0.1, w: this.W * 0.8, h: this.H * 0.8 };
-    else this.crop = null;
+    if (prev === 'crop' && t !== 'crop') this._restoreCropTarget();
+    if (t === 'crop') {
+      // Cropping a selected image layer crops just that image (native Fabric cropX/cropY/width/
+      // height) instead of the whole artboard — but only when it's unrotated: the crop rect below
+      // is drawn in scene space, and mapping that back into a rotated image's own local space is
+      // more than this simple rect UI is worth. Same _lastActiveId fallback as gradient/_maskable
+      // above, since setTool() is about to discardActiveObject() a few lines down.
+      const active = this.fc.getActiveObject() || (this._lastActiveId && this._byId(this._lastActiveId));
+      const target = active && active.type === 'image' && active.role !== 'bg' && !(active.angle % 360) ? active : null;
+      this._cropTarget = target ? target.id : null;
+      if (target) {
+        // Re-cropping an already-cropped image must show the FULL original source again (not just
+        // the sliver currently visible) with the box seeded to the PREVIOUS crop window — "show the
+        // whole image with the current crop selected," same as a fresh crop but starting from
+        // wherever you left off instead of losing everything outside the last crop. Fabric's
+        // cropX/cropY/width/height only ever hide part of _element; the full-res source is always
+        // still there, so this is purely a visual expand-back, undone by _restoreCropTarget() if the
+        // user leaves crop without applying (see prev === 'crop' above) and re-applied by
+        // applyCrop()'s existing math (which already works against whatever state the object is in).
+        const el = target._element;
+        this._cropRestore = { id: target.id, left: target.left, top: target.top, cropX: target.cropX || 0, cropY: target.cropY || 0, width: target.width, height: target.height };
+        const { left, top, width, height } = target.getBoundingRect(true);   // previous crop window, in {x,y,w,h} shape
+        const prevWindow = { x: left, y: top, w: width, h: height };
+        const sx = target.scaleX || 1, sy = target.scaleY || 1;
+        target.set({
+          left: target.left - (target.cropX || 0) * sx, top: target.top - (target.cropY || 0) * sy,
+          cropX: 0, cropY: 0, width: el.naturalWidth || el.width, height: el.naturalHeight || el.height,
+        });
+        target.dirty = true;
+        target.setCoords();
+        this.crop = prevWindow;
+      } else {
+        this._cropRestore = null;
+        // Whole-artboard crop (no eligible image target) always starts flush to the current
+        // artboard — the whole canvas is "selected," matching a fresh entry.
+        this.crop = { x: 0, y: 0, w: this.W, h: this.H };
+      }
+    } else { this.crop = null; this._cropTarget = null; }
     if (t === 'lasso-mag' && !this._edgeMap) this.buildMagneticEdgeMap();
     if ((t === 'objectselect' || t === 'hoverselect') && !this._hoverCache) this._hoverCache = new HoverCache(400);
     // Entering Object select / Hover select (from a different tool) (re)runs detection so the click
@@ -285,13 +346,37 @@ export class Editor {
     // (an async cv.wand call started before the switch) can't land after the fact and emit a
     // 'hover' event a host UI would otherwise keep drawing forever with no tool active to clear it.
     if ((prev === 'objectselect' || prev === 'hoverselect') && t !== prev) { this._hoverPt = null; this._objCycle = null; }
+    // Leaving clone/heal drops the source: coming back later to a stale source point you can no
+    // longer see the origin of is more surprising than being asked to alt-click again.
+    if ((prev === 'clone' || prev === 'heal') && t !== 'clone' && t !== 'heal') this.clearCloneSource();
+    if (!PAINT_TOOLS.includes(t) && this._brushCursor) { this._brushCursor = null; this._emit('brushcursor', null); }
+    if (t !== 'gradient' && this._gradAxis) this._emitGradientAxis(null);
     if (drawing) this.fc.discardActiveObject();
     this.fc.renderAll();
     this._emit('tool', t);
     this._emit('crop', this.crop);
   }
 
-  setToolOptions(patch) { this.toolOpts = { ...this.toolOpts, ...patch }; this._emit('tooloptions', this.toolOpts); }
+  /* Paint tools hide the OS cursor entirely — the shells draw a brush-footprint ring at the pointer
+     instead, which is the only thing that shows the real stamp size (and, for clone/heal, where
+     pixels are being sampled from); a 'crosshair' would just sit on top of it. */
+  _cursorForTool(t) {
+    if (t === 'hand') return 'grab';
+    if (t === 'type') return 'text';
+    if (PAINT_TOOLS.includes(t)) return 'none';
+    return t === 'select' ? 'default' : 'crosshair';
+  }
+
+  setToolOptions(patch) {
+    this.toolOpts = { ...this.toolOpts, ...patch };
+    this._emit('tooloptions', this.toolOpts);
+    // A size/hardness change must resize the ring under a stationary pointer, not wait for a move.
+    if (this._brushCursor && (patch.size != null || patch.hardness != null)) {
+      this._brushCursor = { ...this._brushCursor, size: this.toolOpts.size, hardness: this.toolOpts.hardness };
+      this._emit('brushcursor', this._brushCursor);
+      this.fc.requestRenderAll();
+    }
+  }
 
   /* ── pointer plumbing (scene coordinates come from fabric's own transform) ─────────────── */
   _pt(opt) { return this.fc.getPointer(opt.e); }
@@ -301,6 +386,8 @@ export class Editor {
     fc.on('mouse:down', (opt) => this._down(opt));
     fc.on('mouse:move', (opt) => this._move(opt));
     fc.on('mouse:up', () => this._up());
+    // Leaving the canvas must drop the brush ring, or it stays frozen at the last point it saw.
+    fc.on('mouse:out', (opt) => { if (!opt || !opt.target) { this._brushCursor = null; this._emit('brushcursor', null); } });
     // wheel zoom around the cursor
     fc.on('mouse:wheel', (opt) => {
       const delta = opt.e.deltaY;
@@ -314,6 +401,101 @@ export class Editor {
 
   _applySelClip() {
     this.engine.setClip(selectionToPath2D(this.selection, this.W, this.H), selectionFillRule(this.selection));
+  }
+
+  /* Paint tools edit the ORIGINAL image in place by default — that's what the clone stamp and
+     healing brush are for (you sample a clean patch and paint the blemish out of the photo itself),
+     and retouching on the image is what every other pixel tool does in a photo editor too. Turning
+     on `paintNewLayer` restores the old behavior (strokes accumulate on a separate paint layer),
+     which keeps the edit non-destructive at the cost of not really editing the image.
+
+     The target keeps its OWN pixel resolution and its own transform: a 4000px photo placed on a
+     1000px artboard is retouched at 4000px, so no detail is lost and the layer isn't silently
+     resampled. The scene->layer mapping is handed to the engine, which bakes it into the drawing
+     context (see PaintEngine#_inTargetSpace) so every tool keeps working in plain scene px. */
+  _bindPaintTarget() {
+    if (this.toolOpts.paintNewLayer) { this.engine.setDirectTarget(null); return; }
+    const target = this._paintTargetLayer();
+    if (!target) { this.engine.setDirectTarget(null); return; }
+    // Re-bind only when the target changed: a mid-stroke re-rasterize would throw away the dabs
+    // already painted into the scratch canvas this stroke.
+    if (this.engine._direct && this.engine._direct.layer === target) return;
+    const xf = this._sceneToLayer(target);
+    if (!xf) { this.engine.setDirectTarget(null); return; }
+    const el = target._element;
+    const cv = document.createElement('canvas');
+    cv.width = xf.w; cv.height = xf.h;
+    // Draw the layer's CURRENT source (crop window included) 1:1 into the scratch canvas — this is
+    // the layer's own pixels, untouched by the artboard's resolution.
+    try { cv.getContext('2d').drawImage(el, xf.cropX, xf.cropY, xf.w, xf.h, 0, 0, xf.w, xf.h); }
+    catch (e) { this.engine.setDirectTarget(null); return; }
+    this.engine.setDirectTarget(target, cv, xf);
+  }
+
+  /* Maps scene px onto `o`'s own pixel grid: {scale, dx, dy} such that
+     target_px = scene_px * scale + d. Only axis-aligned, unflipped layers qualify — a rotated or
+     mirrored image would need a full affine inverse, and every caller here draws with a plain
+     translate/scale. Returns null when the layer can't be targeted safely. */
+  _sceneToLayer(o) {
+    if (!o._element) return null;
+    if (o.angle % 360 !== 0 || o.flipX || o.flipY) return null;
+    const sx = o.scaleX || 1, sy = o.scaleY || 1;
+    // Non-uniform scaling would need separate x/y factors throughout the engine (brush dabs are
+    // circles, so they'd have to become ellipses) — not worth it; fall back to a paint layer.
+    if (Math.abs(sx - sy) > 1e-6) return null;
+    const w = Math.round(o.width), h = Math.round(o.height);
+    if (!(w > 0 && h > 0)) return null;
+    const b = o.getBoundingRect(true);   // scene-space top-left of the drawn image
+    return { scale: 1 / sx, dx: -b.left / sx, dy: -b.top / sx, w, h, cropX: o.cropX || 0, cropY: o.cropY || 0 };
+  }
+
+  /* Which layer the paint tools retouch: the active one if it holds pixels, else the topmost
+     image (the photo you opened), else the topmost paint layer. */
+  _paintTargetLayer() {
+    const active = this.fc.getActiveObject() || (this._lastActiveId && this._byId(this._lastActiveId));
+    if (active && !active.locked && (active.type === 'image' || active.role === 'paint')) return active;
+    const objs = this.fc.getObjects().filter(o => !o.locked && (o.type === 'image' || o.role === 'paint'));
+    return objs.length ? objs[objs.length - 1] : null;
+  }
+
+  /* The gradient's live axis, for the shells to draw as a draggable-looking guide line. Without it
+     the only feedback is the painted result itself, which makes the angle and especially the
+     falloff length pure guesswork — every other editor shows this line while you drag.
+     `type` is echoed so a radial gradient can be drawn as a radius + circle instead of an axis. */
+  _emitGradientAxis(from, to) {
+    this._gradAxis = from ? {
+      from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y },
+      type: this.toolOpts.gradientType || 'linear',
+      // The stops ride along the axis as colour swatches (Figma-style), so the shell needs both
+      // each stop's colour and its 0..1 position to place them.
+      stops: normalizeGradientStops(this.toolOpts.gradientStops).map(s => ({ offset: s.offset, color: s.color })),
+    } : null;
+    this._emit('gradientaxis', this._gradAxis);
+    this.fc.requestRenderAll();
+  }
+
+  /* Brush/clone cursor state for the shells. A plain 'crosshair' tells you nothing about the brush
+     footprint, and clone/heal give no clue a source must be picked — so every paint-tool move
+     publishes the ring radius plus, for clone/heal, the anchored source point. */
+  _emitBrushCursor(pt, alt, shift) {
+    const t = this.tool;
+    const cur = { tool: t, x: pt.x, y: pt.y, size: this.toolOpts.size || 20, hardness: this.toolOpts.hardness };
+    if (t === 'clone' || t === 'heal') {
+      const cs = this.engine.cloneState();
+      cur.src = cs.src;
+      // Shift re-sources just like Alt (see PaintEngine#down), so it must show the same reticle.
+      cur.picking = alt || shift || !cs.src;
+    }
+    this._brushCursor = cur;
+    this._emit('brushcursor', cur);
+  }
+
+  /* Clone/heal source, so a shell can show it in a status line / clear it from a button. */
+  get cloneSource() { const cs = this.engine.cloneState(); return cs.src; }
+  clearCloneSource() {
+    this.engine.clearCloneSource();
+    this._emit('clonesource', null);
+    this.fc.requestRenderAll();
   }
 
   _down(opt) {
@@ -346,9 +528,12 @@ export class Editor {
     }
     if (PAINT_TOOLS.includes(t)) {
       this._applySelClip();
+      this._bindPaintTarget();
       const r = this.engine.down(t, pt, o);
-      this._drag = { kind: 'paint' };
-      if (r === 'src-set') this._emit('clonesource', pt);
+      // A source-set click is not a stroke — leaving _drag set would make the following move paint.
+      this._drag = r === 'src-set' ? null : { kind: 'paint' };
+      if (r === 'src-set') this._emit('clonesource', { x: pt.x, y: pt.y });
+      this._emitBrushCursor(pt, !!e.altKey, !!e.shiftKey);
       return;
     }
     if (t === 'marquee' || t === 'marquee-ellipse' || t === 'lasso') {
@@ -458,8 +643,15 @@ export class Editor {
       // 'gradient' is a drawing tool like any other.
       const active = this.fc.getActiveObject() || (this._lastActiveId && this._byId(this._lastActiveId));
       const objTarget = active && active.type !== 'activeSelection' && (active.role !== 'bg' || active.type === 'rect') && !this.selection ? active : null;
-      if (objTarget) { this._drag = { kind: 'gradient-obj', from: pt, obj: objTarget }; return; }
-      this._applySelClip(); this._drag = { kind: 'gradient', from: pt }; return;
+      if (objTarget) {
+        this._drag = { kind: 'gradient-obj', from: pt, obj: objTarget };
+        this._emitGradientAxis(pt, pt);
+        return;
+      }
+      this._applySelClip();
+      this._drag = { kind: 'gradient', from: pt };
+      this._emitGradientAxis(pt, pt);
+      return;
     }
     if (t === 'eyedropper') {
       const hex = this.engine.sample(pt);
@@ -484,6 +676,7 @@ export class Editor {
 
   _move(opt) {
     const pt = this._pt(opt), e = opt.e || {};
+    if (PAINT_TOOLS.includes(this.tool)) this._emitBrushCursor(pt, !!e.altKey, !!e.shiftKey);
     if (this._maskEdit && this._maskDrag && (this.tool === 'brush' || this.tool === 'pencil' || this.tool === 'eraser')) {
       const layer = this._byId(this._maskEdit.layerId);
       if (layer && layer.maskCanvas) {
@@ -526,11 +719,15 @@ export class Editor {
     }
     if (d.kind === 'shape') { resizeShapeTo(d.obj, d.tool, d.from, pt, { square: e.shiftKey }); this.fc.renderAll(); return; }
     if (d.kind === 'gradient') {
-      this.engine.paintGradient(d.from.x, d.from.y, pt.x, pt.y, this.toolOpts.gradientStops, this.toolOpts.gradientType);
+      const to = snapAxis(d.from, pt, e.shiftKey);
+      this.engine.paintGradient(d.from.x, d.from.y, to.x, to.y, this.toolOpts.gradientStops, this.toolOpts.gradientType);
+      this._emitGradientAxis(d.from, to);
       return;
     }
     if (d.kind === 'gradient-obj') {
-      this._applyObjectGradient(d.obj, d.from, pt);
+      const to = snapAxis(d.from, pt, e.shiftKey);
+      this._applyObjectGradient(d.obj, d.from, to);
+      this._emitGradientAxis(d.from, to);
       return;
     }
     if (d.kind === 'crop') {
@@ -546,7 +743,14 @@ export class Editor {
     if (this._maskEdit && this._maskDrag) { this._maskDrag = null; this._flushFrameJob('mask'); this.commit('mask-paint'); return; }
     const d = this._drag; this._drag = null;
     if (!d) return;
-    if (d.kind === 'paint') { this.engine.up(); this.engine.setClip(null); this.commit('stroke'); }
+    if (d.kind === 'paint') {
+      this.engine.up(); this.engine.setClip(null);
+      // Unbind so the NEXT stroke re-rasterizes the target: the layer's pixels have just changed,
+      // and clone/heal must sample the retouched result (captureFlat reads the scene, not this
+      // scratch canvas). Also stops a later tool switch from writing onto a stale target.
+      this.engine.setDirectTarget(null);
+      this.commit('stroke');
+    }
     if (d.kind === 'sel') { this.selection = finalizeSelection(this.selection); this._emit('selection', this.selection); }
     if (d.kind === 'resize-sel') {
       // A plain click (no real drag) on the marquee's own interior/handles is a no-op resize —
@@ -560,8 +764,8 @@ export class Editor {
       else this.selection = finalizeSelection(this.selection);
       this._emit('selection', this.selection);
     }
-    if (d.kind === 'gradient') { this.engine.setClip(null); this.commit('gradient'); }
-    if (d.kind === 'gradient-obj') { this.commit('gradient-fill'); }
+    if (d.kind === 'gradient') { this.engine.setClip(null); this._emitGradientAxis(null); this.commit('gradient'); }
+    if (d.kind === 'gradient-obj') { this._emitGradientAxis(null); this.commit('gradient-fill'); }
     if (d.kind === 'shape') { this.commit('shape'); this.setTool('select'); this.fc.setActiveObject(d.obj); }
     if (d.kind === 'pan' && (this.tool === 'hand' || this._spaceDown)) this.fc.setCursor('grab');
   }
@@ -1088,10 +1292,21 @@ export class Editor {
     this._onSpaceUp = (e) => {
       if (e.code !== 'Space' && e.key !== ' ') return;
       this._spaceDown = false;
-      if (this.tool !== 'hand') this.fc.defaultCursor = this.tool === 'select' ? 'default' : 'crosshair';
+      if (this.tool !== 'hand') this.fc.defaultCursor = this._cursorForTool(this.tool);
+    };
+    // Alt/Shift switch clone/heal into "pick a source" mode, and the shells draw a different
+    // cursor for it — but mouse:move only fires when the pointer actually MOVES, so holding the
+    // modifier over a stationary cursor would otherwise show the wrong reticle until you twitch.
+    this._onPickModifier = (e) => {
+      if (e.key !== 'Alt' && e.key !== 'Shift') return;
+      if (!this._brushCursor || (this.tool !== 'clone' && this.tool !== 'heal')) return;
+      this._emitBrushCursor({ x: this._brushCursor.x, y: this._brushCursor.y }, !!e.altKey, !!e.shiftKey);
+      this.fc.requestRenderAll();
     };
     document.addEventListener('keydown', this._onSpaceDown);
     document.addEventListener('keyup', this._onSpaceUp);
+    document.addEventListener('keydown', this._onPickModifier);
+    document.addEventListener('keyup', this._onPickModifier);
   }
 
   /* Option/Alt+drag duplicate: mirrors the delta the object actually moved onto a fresh clone
@@ -2016,8 +2231,49 @@ export class Editor {
   }
 
   /* ── crop ─────────────────────────────────────────────────────────────────────────────── */
+  // Undoes the "expand to full image" visual done on entering Crop for an already-cropped layer
+  // (see setTool('crop')) when the user leaves the tool WITHOUT applying — otherwise the image
+  // would stay expanded to its pre-crop size/position forever on a plain cancel.
+  _restoreCropTarget() {
+    if (!this._cropRestore) return;
+    const target = this._byId(this._cropRestore.id);
+    if (target) {
+      target.set(this._cropRestore);
+      target.dirty = true;
+      target.setCoords();
+      this.fc.renderAll();
+    }
+    this._cropRestore = null;
+  }
+
   applyCrop() {
     if (!this.crop) return;
+    const target = this._cropTarget && this._byId(this._cropTarget);
+    if (target) {
+      // Crop just this image (Fabric's native cropX/cropY/width/height, in the image's own
+      // unscaled pixel space) instead of the whole artboard. this.crop is in scene space, seeded
+      // from target's bounding rect in setTool() and dragged from there, so map it back through
+      // the object's current scale/crop to get the new local crop box.
+      const before = target.getBoundingRect(true);
+      const sx = target.scaleX || 1, sy = target.scaleY || 1;
+      const localX = (target.cropX || 0) + (this.crop.x - before.left) / sx;
+      const localY = (target.cropY || 0) + (this.crop.y - before.top) / sy;
+      target.set({
+        left: this.crop.x, top: this.crop.y, originX: 'left', originY: 'top',
+        cropX: localX, cropY: localY,
+        width: this.crop.w / sx, height: this.crop.h / sy,
+      });
+      target.dirty = true;
+      target.setCoords();
+      this.crop = null;
+      this._cropTarget = null;
+      this._cropRestore = null;   // the crop just applied IS the new state — nothing left to restore
+      this.setTool('select');
+      this.fc.setActiveObject(target);
+      this.fc.renderAll();
+      this.commit('crop');
+      return;
+    }
     const dim = applyCrop(this.fc, this.crop, this.engine);
     this.W = dim.width; this.H = dim.height;
     this.crop = null;
@@ -2048,7 +2304,7 @@ export class Editor {
   }
   addImage(src, opts = {}) { return addImageLayer(this.fabric, this.fc, src, { W: this.W, H: this.H, ...opts }).then(i => { if (!this._destroyed) this.commit('image'); return i; }); }
   exportPNG(mult = 1) { return exportImage(this.fc, this.W, this.H, { format: 'png', multiplier: mult }); }
-  exportJPEG(quality = 0.92) { return exportImage(this.fc, this.W, this.H, { format: 'jpeg', quality }); }
+  exportJPEG(quality = 0.92, mult = 1) { return exportImage(this.fc, this.W, this.H, { format: 'jpeg', quality, multiplier: mult }); }
   /* Vector export via Fabric's own toSVG — returns an SVG string (wrap in a Blob to download). */
   exportSVG() {
     this.fc.discardActiveObject();
@@ -2057,6 +2313,56 @@ export class Editor {
   }
   toJSON() { return serialize(this.fc, this.W, this.H); }
   loadJSON(json) { restore(this.fc, json, { engine: this.engine, history: this.history, onDone: (w, h) => { this._afterRestore(w, h); this.commit('load'); } }); }
+
+  /* Back to a blank document — what a host's "New" command calls. Everything that survives is
+     the things that aren't the DOCUMENT: the registered AI provider/key, the cv engine, the
+     host's own event subscriptions, and the fabric canvas element itself (fc's DOM size belongs
+     to the host's stage, not the artboard — see the constructor).
+
+     History is emptied rather than kept, because "New" is not an edit: leaving the old document
+     on the undo stack would let Ctrl+Z resurrect a document the user explicitly discarded, and
+     the whole point of the button is to get rid of it. The blank state is then committed as the
+     single baseline entry, exactly as the constructor does for a fresh Editor.
+
+     Every transient cache keyed to the OLD scene's geometry is dropped for the same reason
+     resizeCanvas() drops them — they're scene-space coordinates that no longer refer to
+     anything, and a stale hover/edge-map entry would otherwise snap the first selection in the
+     new document against geometry from the discarded one. */
+  reset({ width = this.W, height = this.H, background } = {}) {
+    this.history.lock = true;                 // the teardown below is not a sequence of undo steps
+    if (this.tool === 'crop') this._restoreCropTarget();
+    if (this._maskEdit) this.exitMaskEdit();
+    this.fc.discardActiveObject();
+    this.fc.clear();                          // drops every object AND fc.backgroundColor
+    this.W = Math.max(1, Math.round(width));
+    this.H = Math.max(1, Math.round(height));
+    this.engine.W = this.W; this.engine.H = this.H;
+    // fc.clear() nulls backgroundColor; restore it so the artboard paints as a page again rather
+    // than as a transparent hole over the void (see the _renderBackground override above).
+    this.fc.backgroundColor = background != null ? background : this._background;
+    this.clearSelection();
+    this._edgeMap = null;
+    this._lastWandSeed = null;
+    this._edgeMapSeq++;
+    this._objBoxes = []; this._objRegion = null; this._objSrc = null; this._objCycle = null;
+    this._objSeq++;
+    this.objCount = 0; this.multiCount = 0;
+    this._lastActiveId = null;
+    this._cropTarget = null;
+    this._cropRestore = null;
+    this._polyBuild = null;
+    this._penBuild = null;
+    if (this._hoverCache) this._hoverCache.clear();
+    this.history.past = []; this.history.future = [];
+    this.history.lock = false;
+    this.fc.renderAll();
+    this.commit('new');                       // single baseline entry, like the constructor's commit('init')
+    this._emit('resize', { width: this.W, height: this.H });
+    this._emit('objcount', 0);
+    this._emit('pen', null);
+    this._emit('selection', null);
+    return this;
+  }
 
   /* ── AI conveniences (thin sugar over the registry) ───────────────────────────────────── */
   async aiEdit(instruction) {
@@ -2678,6 +2984,10 @@ export class Editor {
     if (typeof document !== 'undefined') {
       if (this._onSpaceDown) document.removeEventListener('keydown', this._onSpaceDown);
       if (this._onSpaceUp) document.removeEventListener('keyup', this._onSpaceUp);
+      if (this._onPickModifier) {
+        document.removeEventListener('keydown', this._onPickModifier);
+        document.removeEventListener('keyup', this._onPickModifier);
+      }
     }
     this.fc.dispose();
     this._listeners = {};

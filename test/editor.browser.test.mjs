@@ -1650,3 +1650,215 @@ test('browser: clicking a cached hover-preview mask on objectselect still update
   assert.equal(seed.x, 120);
   assert.equal(seed.y, 80);
 });
+
+/* ── session autosave + reset() ────────────────────────────────────────────────────────────
+   The pure-logic half of session.js (quota shedding, corrupt payloads) is covered in
+   core.test.mjs; what needs a real browser is the round trip through fabric — that a scene
+   serialized out of a live canvas enlivens back into the same objects, and that reset() leaves
+   an Editor genuinely blank rather than merely emptied of objects. */
+
+test('browser: an autosaved scene restores into a fresh Editor, photo-sized and all', async () => {
+  await page.evaluate(async () => {
+    window.__ed.setTool('rect');
+    await window.__session.clearSession();
+  });
+  const canvasBox = await page.locator('#cv').boundingBox();
+  await page.mouse.move(canvasBox.x + 40, canvasBox.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + 140, canvasBox.y + 110, { steps: 4 });
+  await page.mouse.up();
+  await page.evaluate(() => window.__ed.resizeCanvas(321, 222));
+
+  // Autosave is debounced; saveNow() is the deterministic equivalent of waiting it out.
+  const saved = await page.evaluate(async () => {
+    const s = window.__session.installAutosave(window.__ed, { getExtras: () => ({ tray: ['a.png'] }) });
+    await s.saveNow();
+    const backend = s.backend;
+    s.stop();
+    return { stored: (await window.__session.readSession()) !== null, backend };
+  });
+  assert.equal(saved.stored, true);
+  // The whole point of the storage layer: a scene with a photo in it cannot live in
+  // localStorage (~5MB budget vs. a base64 data URL per image), so IndexedDB must be what
+  // actually backs this in a real browser.
+  assert.equal(saved.backend, 'idb');
+
+  // A second, independent Editor over a fresh canvas — the "reopened tab" case.
+  const restored = await page.evaluate(async () => {
+    const el = document.createElement('canvas');
+    document.body.appendChild(el);
+    const ed2 = new window.__Editor({ fabric: window.fabric, canvasEl: el, width: 400, height: 300 });
+    const extras = await window.__session.restoreSession(ed2);
+    return {
+      types: ed2.fc.getObjects().map(o => o.type),
+      W: ed2.W, H: ed2.H,
+      tray: extras && extras.tray,
+      past: ed2.history.past.length,
+    };
+  });
+  assert.deepEqual(restored.types, ['rect']);
+  assert.equal(restored.W, 321);          // the artboard size round-trips, not just the objects
+  assert.equal(restored.H, 222);
+  assert.deepEqual(restored.tray, ['a.png']);
+  // Exactly one baseline entry: undo must not walk back past a restore into the blank canvas
+  // that was never the user's document.
+  assert.equal(restored.past, 1);
+});
+
+test('browser: reset() blanks the document, empties history, and keeps the artboard paintable', async () => {
+  await page.evaluate(() => window.__ed.setTool('rect'));
+  const canvasBox = await page.locator('#cv').boundingBox();
+  await page.mouse.move(canvasBox.x + 30, canvasBox.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + 120, canvasBox.y + 100, { steps: 3 });
+  await page.mouse.up();
+
+  const before = await page.evaluate(() => window.__ed.fc.getObjects().length);
+  assert.ok(before >= 1);
+
+  const after = await page.evaluate(() => {
+    window.__ed.reset({ width: 500, height: 400 });
+    return {
+      objects: window.__ed.fc.getObjects().length,
+      past: window.__ed.history.past.length,
+      future: window.__ed.history.future.length,
+      W: window.__ed.W, H: window.__ed.H,
+      engineW: window.__ed.engine.W, engineH: window.__ed.engine.H,
+      // fc.clear() nulls backgroundColor — reset must paint the page back, or the artboard
+      // renders as a transparent hole over the void instead of a white page.
+      bg: window.__ed.fc.backgroundColor,
+      selection: window.__ed.selection,
+    };
+  });
+  assert.equal(after.objects, 0);
+  assert.equal(after.past, 1);            // a single blank baseline, like a fresh Editor
+  assert.equal(after.future, 0);
+  assert.equal(after.W, 500);
+  assert.equal(after.H, 400);
+  assert.equal(after.engineW, 500);       // the paint engine follows the new artboard
+  assert.equal(after.engineH, 400);
+  assert.ok(after.bg);
+  assert.equal(after.selection, null);
+
+  // Undo right after reset must not resurrect the discarded document.
+  const afterUndo = await page.evaluate(() => { window.__ed.undo(); return window.__ed.fc.getObjects().length; });
+  assert.equal(afterUndo, 0);
+
+  // And the blank document is still fully usable.
+  await page.evaluate(() => window.__ed.setTool('ellipse'));
+  await page.mouse.move(canvasBox.x + 40, canvasBox.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + 110, canvasBox.y + 95, { steps: 3 });
+  await page.mouse.up();
+  const drawn = await page.evaluate(() => window.__ed.fc.getObjects().map(o => o.type));
+  assert.deepEqual(drawn, ['ellipse']);
+});
+
+/* ── magic wand / object select accuracy ───────────────────────────────────────────────────
+   These tools were reported as "not working correctly". Both failures only appear on
+   PHOTOGRAPHIC input — flat synthetic colour passes at any setting, which is why they went
+   unnoticed. Measured against a known-size subject rather than asserting "a selection exists",
+   since the bug was a selection of the WRONG SIZE, not a missing one. */
+
+/* Paints `draw` into a canvas, opens it as the document, wand-picks at (cx,cy) and returns the
+   selection's width in scene px. */
+async function wandWidthAt(page, { size, draw, cx, cy, tolerance }) {
+  await page.evaluate(async ({ size, draw, tolerance }) => {
+    const c = document.createElement('canvas'); c.width = size; c.height = size;
+    // eslint-disable-next-line no-new-func
+    new Function('x', 'S', draw)(c.getContext('2d'), size);
+    await window.__ed.openImage(c.toDataURL('image/png'));
+    window.__ed.setTool('magicwand');
+    window.__ed.setToolOptions({ tolerance });
+    window.__ed.clearSelection();
+  }, { size, draw, tolerance });
+  return page.evaluate(async ({ cx, cy }) => {
+    const mod = await import('/packages/core/src/selection.js');
+    await window.__ed.wandPick({ x: cx, y: cy });
+    const s = window.__ed.selection;
+    if (!s) return null;
+    const polys = mod.selectionPolys(s) || [];
+    let minx = 1e9, maxx = -1e9;
+    polys.forEach(pl => pl.forEach(p => { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; }));
+    return Math.round(maxx - minx);
+  }, { cx, cy });
+}
+
+const PHOTO_SUBJECT = `
+  const g = x.createLinearGradient(0,0,S,S); g.addColorStop(0,'#8fa7c4'); g.addColorStop(1,'#d9c9a8');
+  x.fillStyle = g; x.fillRect(0,0,S,S);
+  const g2 = x.createRadialGradient(S/2,S/2,20,S/2,S/2,S*0.24);
+  g2.addColorStop(0,'#b8452f'); g2.addColorStop(1,'#6d2418');
+  x.fillStyle = g2; x.beginPath(); x.arc(S/2,S/2,S*0.24,0,7); x.fill();
+  const im = x.getImageData(0,0,S,S);
+  for (let i=0;i<im.data.length;i+=4){ const n=(Math.random()-.5)*26; im.data[i]+=n; im.data[i+1]+=n; im.data[i+2]+=n; }
+  x.putImageData(im,0,0);`;
+
+test('browser: the wand hugs a soft-edged photographic subject at the default tolerance', async () => {
+  const size = 1000, ideal = Math.round(size * 0.48);     // the subject's diameter
+  const w = await wandWidthAt(page, {
+    size, draw: PHOTO_SUBJECT, cx: size / 2, cy: size / 2,
+    tolerance: 64,                                        // the shipped default
+  });
+  assert.ok(w !== null, 'the wand must return a selection on a photographic subject');
+  // The old default (32) came back ~28% small here — it stopped at the first shading step
+  // instead of the object's edge, visibly cutting inside the thing the user clicked.
+  const errPct = Math.abs(w - ideal) / ideal * 100;
+  assert.ok(errPct < 12, `wand selected ${w}px for a ${ideal}px subject (${errPct.toFixed(0)}% off)`);
+});
+
+test('browser: a low-contrast subject does not flood the wand selection to the whole canvas', async () => {
+  const size = 1000, ideal = Math.round(size * 0.5);
+  // Subject and background are close enough in colour that the flood escapes into the
+  // background — the worker then used to take the >90% mask at face value and hand back the
+  // ENTIRE canvas, which is never what clicking on an object means.
+  const draw = `
+    x.fillStyle='#9aa3ae'; x.fillRect(0,0,S,S);
+    x.fillStyle='#7f8b98'; x.beginPath(); x.arc(S/2,S/2,S*0.25,0,7); x.fill();
+    const im=x.getImageData(0,0,S,S);
+    for(let i=0;i<im.data.length;i+=4){const n=(Math.random()-.5)*18; im.data[i]+=n; im.data[i+1]+=n; im.data[i+2]+=n;}
+    x.putImageData(im,0,0);`;
+  const w = await wandWidthAt(page, { size, draw, cx: size / 2, cy: size / 2, tolerance: 64 });
+  assert.ok(w !== null);
+  assert.ok(w < size * 0.9, `wand flooded to ${w}px of a ${size}px canvas instead of the subject`);
+  assert.ok(Math.abs(w - ideal) / ideal * 100 < 15, `wand selected ${w}px for a ${ideal}px subject`);
+});
+
+test('browser: clicking flat background still selects the background, not just the subject', async () => {
+  // The flood-leak fix must not break the legitimate case it has to be told apart from:
+  // a deliberate click on a flat background genuinely does select almost the whole frame.
+  const size = 1000;
+  const draw = `
+    x.fillStyle='#ffffff'; x.fillRect(0,0,S,S);
+    x.fillStyle='#c0392b'; x.beginPath(); x.arc(S/2,S/2,200,0,7); x.fill();`;
+  const w = await wandWidthAt(page, { size, draw, cx: 60, cy: 60, tolerance: 64 });
+  assert.ok(w !== null);
+  assert.ok(w > size * 0.9, `background click selected only ${w}px of a ${size}px canvas`);
+});
+
+test('browser: the wand picks the element under the cursor, not a bigger same-coloured one elsewhere', async () => {
+  /* Real-world failure from an ad layout: a small green "now at" pill near the top and a large
+     green product card lower down. Clicking the PILL returned the CARD — the flood/grabCut mask
+     spanned both same-coloured blobs and the contour picker then preferred the largest one.
+     Design work reuses a brand colour constantly, so this is the common case, not an edge case. */
+  const size = 1000;
+  const draw = `
+    x.fillStyle='#f4f4f2'; x.fillRect(0,0,S,S);
+    x.fillStyle='#4cc47a'; x.fillRect(120,120,170,60);      // small pill  (the target)
+    x.fillStyle='#4cc47a'; x.fillRect(100,500,300,400);     // big card, same colour`;
+  const w = await wandWidthAt(page, { size, draw, cx: 200, cy: 150, tolerance: 64 });
+  assert.ok(w !== null, 'clicking the pill must select something');
+  // The pill is 170px wide; the card is 300px. Before the fix this came back as the card.
+  assert.ok(w < 240, `wand returned a ${w}px-wide selection for a 170px pill — it grabbed the other element`);
+
+  // And the click must land on the pill's own box, not somewhere else on the canvas.
+  const box = await page.evaluate(async () => {
+    const mod = await import('/packages/core/src/selection.js');
+    const s = window.__ed.selection;
+    const polys = mod.selectionPolys(s) || [];
+    let minx = 1e9, miny = 1e9;
+    polys.forEach(pl => pl.forEach(p => { if (p.x < minx) minx = p.x; if (p.y < miny) miny = p.y; }));
+    return { x: Math.round(minx), y: Math.round(miny) };
+  });
+  assert.ok(box.y < 300, `selection started at y=${box.y}; the pill is at y=120, the card at y=500`);
+});

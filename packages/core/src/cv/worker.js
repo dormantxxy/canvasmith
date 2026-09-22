@@ -76,6 +76,24 @@ export function cvWorkerBody() {
     return (pts && pts.length >= 3) ? pts : null;
   }
 
+  /* Reduces a binary mask in-place to the single 4/8-connected blob containing `seed`. Used to
+     stop a wand pick from spanning several same-coloured elements (see the call site). */
+  function keepSeedComponent(mask, seed) {
+    var labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
+    var n = cv.connectedComponentsWithStats(mask, labels, stats, cents, 8, cv.CV_32S);
+    if (n > 2) {                                    // 0 is background; >1 real blob means a choice
+      var sx = Math.max(0, Math.min(mask.cols - 1, seed.cx | 0));
+      var sy = Math.max(0, Math.min(mask.rows - 1, seed.cy | 0));
+      var lbl = labels.intPtr(sy, sx)[0];
+      // The seed can land on a hole left by MORPH_CLOSE; only filter when it is on a real blob.
+      if (lbl > 0) {
+        var md = mask.data, ld = labels.data32S;
+        for (var i = 0; i < ld.length; i++) if (ld[i] !== lbl) md[i] = 0;
+      }
+    }
+    labels.delete(); stats.delete(); cents.delete();
+  }
+
   // Hybrid color->object magic wand: flood-fill the same-colour pixels at the click (within `tol`),
   // then let grabCut grow that seed into the complete object (shadows/edges included). Returns its
   // contour as a polygon, traced at `eps` fidelity (smaller = hugs the edge more tightly).
@@ -90,12 +108,45 @@ export function cvWorkerBody() {
     var roi = ff.roi(new cv.Rect(1, 1, W, H)), region = new cv.Mat(); roi.copyTo(region); roi.delete();
     var k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
     cv.morphologyEx(region, region, cv.MORPH_CLOSE, k);
+    /* Keep ONLY the blob the user actually clicked. floodFill itself is connected, but the
+       MORPH_CLOSE above dilates then erodes, which can bridge a clicked element to a nearby
+       same-coloured one; and in a design/ad layout the same brand colour is deliberately reused
+       (a small "now at" pill and a large product card, say). Everything downstream — grabCut's
+       foreground seeding and the contour pick — then sees several disconnected blobs and can
+       return one the user never clicked. Restricting to the seed's own component here means the
+       wand can only ever grow the thing under the cursor. */
+    keepSeedComponent(region, seed);
     var area = cv.countNonZero(region);
     var pts = null;
     if (area > 0) {
       var fm;
+      /* A flood that swallowed nearly the whole frame is ambiguous: it is either a deliberate
+         click on a flat background, or — far more often — a LEAK, where a low-contrast subject
+         and its surroundings fall inside `tol` and the fill escapes into the background. Trusting
+         the mask in the leak case returns the entire canvas as "the selection", which is never
+         what a user clicking on an object wanted (measured: a 600px subject on a 1200px canvas
+         selected all 1200px once tolerance passed 24).
+         Distinguishing the two from the mask alone is not possible, so re-run the fill with a
+         progressively TIGHTER tolerance and keep the first result that stops short of the frame.
+         If every attempt still floods, the click really was on a flat background and the mask is
+         taken as-is. */
+      if (area > W * H * 0.9) {
+        var tight = null;
+        for (var ti = 0; ti < 3 && !tight; ti++) {
+          var t2 = Math.max(4, Math.round(tol / (2 << ti)));
+          var ff2 = cv.Mat.zeros(H + 2, W + 2, cv.CV_8UC1);
+          var d2 = new cv.Scalar(t2, t2, t2, t2);
+          cv.floodFill(rgb, ff2, new cv.Point(seed.cx, seed.cy), new cv.Scalar(0, 0, 0), new cv.Rect(), d2, d2, flags);
+          var roi2 = ff2.roi(new cv.Rect(1, 1, W, H)), r2 = new cv.Mat(); roi2.copyTo(r2); roi2.delete();
+          cv.morphologyEx(r2, r2, cv.MORPH_CLOSE, k);
+          var a2 = cv.countNonZero(r2);
+          if (a2 > W * H * 0.0008 && a2 <= W * H * 0.9) { tight = r2; } else { r2.delete(); }
+          ff2.delete();
+        }
+        if (tight) { region.delete(); region = tight; area = cv.countNonZero(region); }
+      }
       if (area > W * H * 0.9 || area < W * H * 0.0008) {
-        fm = region.clone();   // flat-fill (background) or speck -> trust the colour mask, skip grabCut
+        fm = region.clone();   // genuinely flat fill (background) or speck -> skip grabCut
       } else {
         var gm = new cv.Mat(H, W, cv.CV_8UC1, new cv.Scalar(cv.GC_PR_BGD));
         gm.setTo(new cv.Scalar(cv.GC_PR_FGD), region);
@@ -109,8 +160,22 @@ export function cvWorkerBody() {
       }
       cv.GaussianBlur(fm, fm, new cv.Size(3, 3), 0); cv.threshold(fm, fm, 127, 255, cv.THRESH_BINARY);
       var cs = new cv.MatVector(), h = new cv.Mat(); cv.findContours(fm, cs, h, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
-      var pick = -1, pa = 0;
-      for (var j = 0; j < cs.size(); j++) { var c = cs.get(j), a = cv.contourArea(c), r = cv.boundingRect(c), ins = seed.cx >= r.x && seed.cx <= r.x + r.width && seed.cy >= r.y && seed.cy <= r.y + r.height; if ((ins && a > pa) || (pick < 0 && a > pa)) { pa = a; pick = j; } c.delete(); }
+      /* Prefer the contour that actually CONTAINS the click, and only fall back to "largest" when
+         nothing does. The previous test used the bounding BOX plus a `pick < 0 || a > pa` mix that
+         let a bigger contour win even when a smaller one held the seed — clicking a small element
+         could hand back a larger same-coloured one elsewhere on the canvas. pointPolygonTest is
+         true containment, so an L-shaped or concave neighbour whose bbox merely overlaps the click
+         no longer qualifies. */
+      var pick = -1, pa = 0, hit = -1, ha = 0;
+      for (var j = 0; j < cs.size(); j++) {
+        var c = cs.get(j), a = cv.contourArea(c);
+        if (cv.pointPolygonTest(c, new cv.Point(seed.cx, seed.cy), false) >= 0) {
+          if (hit < 0 || a < ha) { ha = a; hit = j; }     // smallest containing contour = the clicked element
+        }
+        if (a > pa) { pa = a; pick = j; }
+        c.delete();
+      }
+      if (hit >= 0) pick = hit;
       if (pick >= 0) { var cc = cs.get(pick), ap = new cv.Mat(); cv.approxPolyDP(cc, ap, EPS * cv.arcLength(cc, true), true); pts = []; for (var p = 0; p < ap.rows; p++) pts.push({ x: ap.intPtr(p, 0)[0], y: ap.intPtr(p, 0)[1] }); ap.delete(); cc.delete(); }
       fm.delete(); cs.delete(); h.delete();
     }

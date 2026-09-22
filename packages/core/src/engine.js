@@ -54,8 +54,57 @@ export class PaintEngine {
     this._lastStrokeEnd = null; this._curPt = null; this._newSourceSet = false;
   }
 
+  /* Clone/heal source state, read by the shells to draw the source marker and the live "pixels
+     come from here" ghost ring. `offset` is only meaningful once a stroke has started; before
+     that the ghost tracks the raw source point. */
+  cloneState() {
+    return { src: this._src ? { ...this._src } : null, off: this._off ? { ...this._off } : null, pending: this._newSourceSet };
+  }
+
+  clearCloneSource() { this._src = null; this._off = null; this._newSourceSet = false; }
+
+  /* Destructive mode: bind the engine's drawing surface to an EXISTING layer's own pixels, so
+     strokes edit that image in place instead of accumulating on a separate paint layer (how the
+     clone stamp works in Photoshop by default). `cv` is a scratch canvas the caller has already
+     filled with the layer's current pixels AT THE LAYER'S OWN RESOLUTION, so retouching a 4000px
+     photo dropped on a 1000px artboard keeps all four thousand pixels. `xf` ({scale, dx, dy}) maps
+     scene coordinates onto that canvas — every tool here works in scene px, so rather than convert
+     each dab by hand the transform is baked into the context and the inverse scale is handed back
+     through sceneScale() for the few places that need a real pixel radius. Flushing the canvas back
+     onto the layer is the caller's job (see Editor#_bindPaintTarget); null restores normal mode. */
+  setDirectTarget(layer, cv, xf) {
+    const was = this._direct;
+    this._direct = layer ? { layer, cv, xf: xf || { scale: 1, dx: 0, dy: 0 } } : null;
+    if (layer) {
+      this.cv = cv; this.ctx = cv.getContext('2d'); this.layer = layer;
+      return;
+    }
+    // Leaving destructive mode must also drop the borrowed layer/canvas, or ensure() would happily
+    // keep painting onto the image we were retouching instead of making a fresh paint layer.
+    if (was) { this.layer = null; this.cv = null; this.ctx = null; }
+  }
+
+  /* Scene px -> target px. 1 in normal mode; >1 when retouching an image denser than the artboard. */
+  sceneScale() { return this._direct ? this._direct.xf.scale : 1; }
+
+  /* Runs `fn` with the context mapped so scene coordinates land on the target's own pixel grid.
+     Every drawing primitive below goes through this, so none of them needs to know about it. */
+  _inTargetSpace(fn) {
+    const ctx = this.ctx, d = this._direct;
+    if (!d) return fn(ctx);
+    ctx.save();
+    ctx.translate(d.xf.dx, d.xf.dy);
+    ctx.scale(d.xf.scale, d.xf.scale);
+    try { return fn(ctx); } finally { ctx.restore(); }
+  }
+
   /* The engine's Fabric layer, created on first use and re-created if the host deleted it. */
   ensure() {
+    // Destructive mode already owns cv/ctx/layer — never swap in a fresh blank canvas under it.
+    if (this._direct) {
+      if (this.fc.getObjects().includes(this._direct.layer)) return this._direct.layer;
+      this._direct = null;   // target deleted mid-session — fall through and make a paint layer
+    }
     if (this.layer && this.fc.getObjects().includes(this.layer)) return this.layer;
     this.cv = document.createElement('canvas');
     this.cv.width = this.W;
@@ -76,7 +125,15 @@ export class PaintEngine {
     this.layer = img; this.fc.add(img); return img;
   }
 
-  commit() { if (this.layer) this.layer.dirty = true; this.fc.renderAll(); }
+  commit() {
+    // Destructive mode: the scratch canvas IS the layer's new source, so hand it back through
+    // setElement (which also refreshes _originalElement — a raw _element assignment would let a
+    // later filter pass revert the layer to its pre-stroke pixels). Skipped when the layer already
+    // holds this exact canvas, i.e. a paint layer drawing onto its own backing store.
+    if (this._direct && this._direct.layer._element !== this.cv) this._direct.layer.setElement(this.cv);
+    if (this.layer) this.layer.dirty = true;
+    this.fc.renderAll();
+  }
 
   /* Selection clipping: strokes land only inside `path2d` (evenodd supports inverted selections). */
   setClip(path2d, rule) { this._clip = path2d || null; this._clipRule = rule || 'nonzero'; }
@@ -88,65 +145,86 @@ export class PaintEngine {
   }
 
   _softStamp(x, y, o, color, comp, alphaMul) {
-    const ctx = this.ctx, r = Math.max(1, o.size / 2);
+    const r = Math.max(1, o.size / 2);
     // Clamped shy of 1: Canvas2D's radial gradient degenerates to fully transparent everywhere
     // when the inner/outer radii are exactly equal, so a hardness-1 (fully hard) brush would
     // otherwise paint nothing instead of a crisp hard edge. See mask.js's maskStamp for the same fix.
     const hard = Math.min(o.hardness != null ? o.hardness : 0.7, 0.995);
-    ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
-    ctx.globalCompositeOperation = comp || 'source-over';
-    ctx.globalAlpha = (o.opacity != null ? o.opacity : 1) * (alphaMul || 1);
-    const g = ctx.createRadialGradient(x, y, r * hard, x, y, r);
-    g.addColorStop(0, rgba(color, 1)); g.addColorStop(1, rgba(color, 0));
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-    ctx.restore();
+    this._inTargetSpace(ctx => {
+      ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
+      ctx.globalCompositeOperation = comp || 'source-over';
+      ctx.globalAlpha = (o.opacity != null ? o.opacity : 1) * (alphaMul || 1);
+      const g = ctx.createRadialGradient(x, y, r * hard, x, y, r);
+      g.addColorStop(0, rgba(color, 1)); g.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      ctx.restore();
+    });
   }
 
   _hardStamp(x, y, o, color) {
-    const ctx = this.ctx, r = Math.max(0.5, o.size / 2);
-    ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
-    ctx.globalAlpha = o.opacity != null ? o.opacity : 1; ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.restore();
+    const r = Math.max(0.5, o.size / 2);
+    this._inTargetSpace(ctx => {
+      ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
+      ctx.globalAlpha = o.opacity != null ? o.opacity : 1; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.restore();
+    });
   }
 
   /* Clone/heal: copy pixels from the flattened scene at a source offset; heal adds a blur pass so
      the patch melts into its surroundings. Soft edges come from a destination-in radial mask. */
   _cloneStamp(x, y, o, blur) {
     if (!this._flat || !this._off) return;
-    const ctx = this.ctx, r = Math.max(1, o.size / 2);
+    const r = Math.max(1, o.size / 2);
     const hard = Math.min(o.hardness != null ? o.hardness : 0.7, 0.995);   // see _softStamp's comment
+    // The patch is built at the TARGET's pixel density, not the artboard's: when retouching a photo
+    // denser than the artboard, a temp canvas sized in scene px would throw away that extra detail
+    // on the way in and then upscale the blur, leaving a visibly soft stamp on a sharp photo.
+    const sc = this.sceneScale();
+    const size = Math.max(1, Math.ceil(r * 2 * sc));
     const tempCanvas = document.createElement('canvas');
-    const size = Math.ceil(r * 2);
     tempCanvas.width = size;
     tempCanvas.height = size;
     const tempCtx = tempCanvas.getContext('2d');
     const sx = x - this._off.x - r;
     const sy = y - this._off.y - r;
-    try { tempCtx.drawImage(this._flat, sx, sy, r * 2, r * 2, 0, 0, r * 2, r * 2); } catch (e) { /* out of bounds */ }
+    // _flat is always artboard-resolution (captureFlat renders the scene at W×H), so the source
+    // rect stays in scene px while the destination fills the denser temp canvas.
+    try { tempCtx.drawImage(this._flat, sx, sy, r * 2, r * 2, 0, 0, size, size); } catch (e) { /* out of bounds */ }
+    const tr = size / 2;
     tempCtx.globalCompositeOperation = 'destination-in';
-    const g = tempCtx.createRadialGradient(r, r, r * hard, r, r, r);
+    const g = tempCtx.createRadialGradient(tr, tr, tr * hard, tr, tr, tr);
     g.addColorStop(0, 'rgba(0,0,0,1)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     tempCtx.fillStyle = g;
     tempCtx.beginPath();
-    tempCtx.arc(r, r, r, 0, 2 * Math.PI);
+    tempCtx.arc(tr, tr, tr, 0, 2 * Math.PI);
     tempCtx.fill();
-    ctx.save();
-    if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
-    ctx.globalAlpha = o.opacity != null ? o.opacity : 1;
-    if (blur) ctx.filter = 'blur(' + Math.max(2, r * 0.35) + 'px)';
-    ctx.drawImage(tempCanvas, x - r, y - r);
-    ctx.restore();
+    this._inTargetSpace(ctx => {
+      ctx.save();
+      if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
+      ctx.globalAlpha = o.opacity != null ? o.opacity : 1;
+      // `filter` is applied in the context's CURRENT (scaled) space, so a scene-px radius scales
+      // with the image automatically — the heal blur stays proportional at any target density.
+      if (blur) ctx.filter = 'blur(' + Math.max(2, r * 0.35) + 'px)';
+      ctx.drawImage(tempCanvas, x - r, y - r, r * 2, r * 2);
+      ctx.restore();
+    });
   }
 
   /* Red-eye: detect red-dominant pixels under the brush and pull them to the G/B average. */
   _redEyeCorrection(x, y, o) {
     const ctx = this.ctx;
-    const r = Math.max(1, o.size / 2);
-    const left = Math.max(0, Math.floor(x - r));
-    const top = Math.max(0, Math.floor(y - r));
-    const width = Math.min(this.W - left, Math.ceil(r * 2));
-    const height = Math.min(this.H - top, Math.ceil(r * 2));
+    // getImageData/putImageData ignore the context transform, so this one works in raw target
+    // pixels: the brush centre and radius are converted up front, and the bounds come from the
+    // bound canvas rather than the artboard (they differ whenever a denser image is the target).
+    const d = this._direct, sc = this.sceneScale();
+    const cx = d ? x * sc + d.xf.dx : x, cy = d ? y * sc + d.xf.dy : y;
+    const r = Math.max(1, (o.size / 2) * sc);
+    const cw = this.cv ? this.cv.width : this.W, ch = this.cv ? this.cv.height : this.H;
+    const left = Math.max(0, Math.floor(cx - r));
+    const top = Math.max(0, Math.floor(cy - r));
+    const width = Math.min(cw - left, Math.ceil(r * 2));
+    const height = Math.min(ch - top, Math.ceil(r * 2));
     if (width <= 0 || height <= 0) return;
     let imgData;
     try { imgData = ctx.getImageData(left, top, width, height); } catch (e) { return; }
@@ -158,7 +236,7 @@ export class PaintEngine {
         const idx = (py * width + px) << 2;
         const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2], aVal = data[idx + 3];
         if (aVal > 0) {
-          const dx = (left + px) - x, dy = (top + py) - y;
+          const dx = (left + px) - cx, dy = (top + py) - cy;
           const dist = Math.hypot(dx, dy);
           if (dist <= r && rVal > 80 && rVal > gVal * 1.3 && rVal > bVal * 1.3) {
             const falloff = 1 - (dist / r);
@@ -174,14 +252,18 @@ export class PaintEngine {
     }
     if (changed) {
       if (this._clip) {
+        // The clip path is in SCENE space, so this draw has to go through the same transform as
+        // every other primitive — which means the destination rect is expressed in scene px too.
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = width;
         tempCanvas.height = height;
         tempCanvas.getContext('2d').putImageData(imgData, 0, 0);
-        ctx.save();
-        ctx.clip(this._clip, this._clipRule || 'nonzero');
-        ctx.drawImage(tempCanvas, left, top);
-        ctx.restore();
+        this._inTargetSpace(c => {
+          c.save();
+          c.clip(this._clip, this._clipRule || 'nonzero');
+          c.drawImage(tempCanvas, (left - (d ? d.xf.dx : 0)) / sc, (top - (d ? d.xf.dy : 0)) / sc, width / sc, height / sc);
+          c.restore();
+        });
       } else {
         ctx.putImageData(imgData, left, top);
       }
@@ -216,13 +298,15 @@ export class PaintEngine {
   }
 
   /* Pointer protocol: down/move/up in scene coordinates.
-     clone/heal: alt-click sets the source ('src-set' is returned so the UI can show it);
-     shift-click joins strokes with a straight line, Photoshop-style. */
+     clone/heal: alt-click OR shift-click sets the source ('src-set' is returned so the UI can show
+     it) — shift is a second, trackpad-friendly way to move the reference point, and it is free for
+     clone/heal because the shift-to-join-strokes behavior below deliberately excludes them;
+     other tools: shift-click joins strokes with a straight line, Photoshop-style. */
   down(tool, pt, o) {
     this.ensure();
     this._curPt = pt;
     if (tool === 'clone' || tool === 'heal') {
-      if (o.alt || !this._src) {
+      if (o.alt || o.shift || !this._src) {
         this._src = { x: pt.x, y: pt.y };
         this._newSourceSet = true;
         return 'src-set';
@@ -269,9 +353,12 @@ export class PaintEngine {
      always had the right order; fill/gradient did not — caught by the demo screenshot session. */
   fill(color) {
     this.ensure();
-    const ctx = this.ctx; ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
-    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.fillStyle = color;
-    ctx.fillRect(0, 0, this.W, this.H); ctx.restore(); this.commit();
+    this._inTargetSpace(ctx => {
+      ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.fillStyle = color;
+      ctx.fillRect(0, 0, this.W, this.H); ctx.restore();
+    });
+    this.commit();
   }
 
   /* Fills the (clipped) paint layer with a gradient from (x1,y1) to (x2,y2) — Photoshop's
@@ -283,10 +370,13 @@ export class PaintEngine {
      "redo this preview frame" the way stroke-based tools require. */
   paintGradient(x1, y1, x2, y2, stops, type = 'linear') {
     this.ensure();
-    const ctx = this.ctx; ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
-    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
-    ctx.fillStyle = buildCanvasGradient(ctx, x1, y1, x2, y2, stops, type);
-    ctx.fillRect(0, 0, this.W, this.H); ctx.restore(); this.commit();
+    this._inTargetSpace(ctx => {
+      ctx.save(); if (this._clip) ctx.clip(this._clip, this._clipRule || 'nonzero');
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+      ctx.fillStyle = buildCanvasGradient(ctx, x1, y1, x2, y2, stops, type);
+      ctx.fillRect(0, 0, this.W, this.H); ctx.restore();
+    });
+    this.commit();
   }
 
   /* Eyedropper: composited colour at a point, as hex. */

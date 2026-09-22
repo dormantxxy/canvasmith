@@ -11,8 +11,9 @@
 <body>
 <canvas id="cv"></canvas>
 <script type="module">
-  import { Editor, installKeybindings } from '/packages/core/src/index.js';
+  import { Editor, installKeybindings, installAutosave, restoreSession, readSession, clearSession } from '/packages/core/src/index.js';
   window.__Editor = Editor;
+  window.__session = { installAutosave, restoreSession, readSession, clearSession };
   window.__ed = new Editor({ fabric: window.fabric, canvasEl: document.getElementById('cv'), width: 400, height: 300 });
   window.__stopKeys = installKeybindings(window.__ed);
   window.__ready = true;

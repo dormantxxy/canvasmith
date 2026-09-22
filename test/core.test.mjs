@@ -12,6 +12,7 @@ import {
   selectionPolys, polysToSelection, addPolyToSelection, selectionBounds, HoverCache,
 } from '../packages/core/src/selection.js';
 import { getCropHandle, dragCropRect } from '../packages/core/src/crop.js';
+import { readSession, writeSession, clearSession, discardToTrash, readDiscarded, parseProject } from '../packages/core/src/session.js';
 import { alignDelta, snapDelta } from '../packages/core/src/layout.js';
 import { parseLaunch } from '../packages/core/src/bridge.js';
 import { starPoints } from '../packages/core/src/shapes.js';
@@ -456,4 +457,134 @@ test('templates: layer geometry scales with W/H (percentage-of-artboard, not fix
   const headSmall = small.layers.find(l => l.id === 'headline'), headBig = big.layers.find(l => l.id === 'headline');
   assert.equal(headBig.size, headSmall.size * 2);
   assert.equal(headBig.top, headSmall.top * 2);
+});
+
+test('history: rebase makes a state the floor of the stack, whatever was recorded before it', () => {
+  const h = new History();
+  h.push('empty'); h.push('a'); h.push('b');
+  h.undo();                                              // something on the redo stack too
+  assert.ok(h.future.length > 0);
+
+  assert.equal(h.rebase('restored'), true);
+  assert.deepEqual(h.past, ['restored']);
+  assert.equal(h.future.length, 0);
+  assert.equal(h.canUndo(), false);                      // nothing behind the floor to undo into
+  assert.equal(h.canRedo(), false);
+
+  // Ordinary edits still stack on top of the floor and undo back down to it — a rebase is a
+  // new starting point, not a frozen history.
+  h.push('edit');
+  assert.equal(h.canUndo(), true);
+  assert.equal(h.undo(), 'restored');
+  assert.equal(h.canUndo(), false);
+
+  assert.equal(h.rebase(null), false);                   // nothing to rebase onto
+});
+
+/* ── session autosave ───────────────────────────────────────────────────────────────
+   The real backend is IndexedDB (localStorage cannot hold a photo document — see session.js),
+   but the backend is injected, so the envelope/versioning/quota-shedding logic is testable here
+   in bare node. The fabric round-trip through a live canvas is covered in editor.browser.test.mjs.
+
+   An injected backend is the async {get,set,del} shape session.js expects. `cap` counts only
+   OTHER keys plus the incoming value, matching how a store frees the key being overwritten
+   before deciding whether the new value fits. */
+function memStore(cap = Infinity) {
+  const m = new Map();
+  return {
+    kind: 'mem',
+    _raw: m,
+    async get(k) { return m.has(k) ? m.get(k) : null; },
+    async set(k, v) {
+      const other = [...m].filter(([kk]) => kk !== k).reduce((sum, [, vv]) => sum + vv.length, 0);
+      if (other + v.length > cap) { const e = new Error('quota'); e.name = 'QuotaExceededError'; throw e; }
+      m.set(k, v);
+    },
+    async del(k) { m.delete(k); },
+  };
+}
+
+test('session: round-trips the scene string and the host extras', async () => {
+  const storage = memStore();
+  assert.equal(await writeSession('{"w":10,"h":10}', { assets: [{ src: 'a' }] }, { storage }), 'ok');
+  const r = await readSession({ storage });
+  assert.equal(r.scene, '{"w":10,"h":10}');
+  assert.deepEqual(r.extras.assets, [{ src: 'a' }]);
+});
+
+test('session: over quota, extras are shed but the scene still saves', async () => {
+  const scene = 'S'.repeat(300);
+  const storage = memStore(400);
+  assert.equal(await writeSession(scene, { thumbs: 'X'.repeat(500) }, { storage }), 'ok-trimmed');
+  assert.equal((await readSession({ storage })).scene, scene);
+  assert.deepEqual((await readSession({ storage })).extras, {});
+});
+
+test('session: a scene too big even alone reports failure and leaves no stale save behind', async () => {
+  const storage = memStore(100);
+  assert.equal(await writeSession('S'.repeat(500), {}, { storage }), 'failed');
+  assert.equal(await readSession({ storage }), null);
+});
+
+test('session: a newer save replaces an equally large older one', async () => {
+  const storage = memStore(400);
+  assert.equal(await writeSession('A'.repeat(300), {}, { storage }), 'ok');
+  assert.equal(await writeSession('B'.repeat(300), {}, { storage }), 'ok');
+  assert.ok((await readSession({ storage })).scene.startsWith('B'));
+});
+
+test('session: a corrupt/truncated payload is dropped rather than thrown', async () => {
+  const storage = memStore();
+  await storage.set('canvasmith.session', '{not json');
+  assert.equal(await readSession({ storage }), null);
+  assert.equal(await storage.get('canvasmith.session'), null);   // cleared, so the next boot starts clean
+});
+
+test('session: a payload from a different schema version is ignored, not half-restored', async () => {
+  const storage = memStore();
+  await storage.set('canvasmith.session', JSON.stringify({ v: 99, scene: '{}' }));
+  assert.equal(await readSession({ storage }), null);
+});
+
+test('session: a backend that throws on every write reports failure, never throws at the caller', async () => {
+  const hostile = {
+    kind: 'hostile',
+    async get() { return null; },
+    async set() { throw new Error('blocked'); },
+    async del() { },
+  };
+  assert.equal(await writeSession('x', { a: 1 }, { storage: hostile }), 'failed');
+  assert.equal(await readSession({ storage: hostile }), null);
+});
+
+test('session: New parks the old document in a trash slot so the action is recoverable', async () => {
+  const storage = memStore();
+  await writeSession('{"scene":"work"}', { assets: ['a'] }, { storage });
+  assert.equal(await discardToTrash({ storage }), true);
+  // New then clears the LIVE slot — the trashed copy must survive that.
+  await clearSession({ storage });
+  assert.equal(await readSession({ storage }), null);
+  const trashed = await readDiscarded({ storage });
+  assert.equal(trashed.scene, '{"scene":"work"}');
+  assert.deepEqual(trashed.extras.assets, ['a']);
+});
+
+test('session: discarding with nothing saved is a no-op, not an error', async () => {
+  const storage = memStore();
+  assert.equal(await discardToTrash({ storage }), false);
+  assert.equal(await readDiscarded({ storage }), null);
+});
+
+test('project: a non-project file is rejected with a message meant for the user', () => {
+  assert.throws(() => parseProject('not json at all'), /isn.t valid JSON|isn.t a Canvasmith project/);
+  assert.throws(() => parseProject(JSON.stringify({ hello: 1 })), /isn.t a Canvasmith project/);
+  assert.throws(() => parseProject(JSON.stringify({ kind: 'something/else', scene: '{}' })), /isn.t a Canvasmith project/);
+  assert.throws(() => parseProject(JSON.stringify({ kind: 'canvasmith/project', v: 99, scene: '{}' })), /newer version/);
+});
+
+test('project: a valid project round-trips its scene and extras', () => {
+  const file = JSON.stringify({ kind: 'canvasmith/project', v: 1, scene: '{"w":10,"h":10}', extras: { assets: [1, 2] } });
+  const p = parseProject(file);
+  assert.equal(p.scene, '{"w":10,"h":10}');
+  assert.deepEqual(p.extras.assets, [1, 2]);
 });

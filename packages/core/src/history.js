@@ -24,6 +24,23 @@ export class History {
     return true;
   }
 
+  /* Make `state` the floor of the undo stack: everything recorded before it is discarded and
+     undo can never walk back past it.
+
+     Session restore needs this. A restored document is not an edit the user made in this
+     session, so there must be nothing behind it to undo into — but the Editor's constructor has
+     already pushed an empty canvas as entry #1, and hosts commit on their own schedule while
+     fabric's enlivenObjects is still finishing (the React shell's mount effect and its
+     fit-to-screen pass both do). Anything that merely clears the stack at some chosen moment
+     loses that race whenever a late commit lands after it; rebasing here is a single ordering-
+     independent operation, so the caller doesn't have to guess when the dust settles. */
+  rebase(state) {
+    if (state == null) return false;
+    this.past = [state];
+    this.future = [];
+    return true;
+  }
+
   canUndo() { return this.past.length >= 2; }
   canRedo() { return this.future.length > 0; }
 
