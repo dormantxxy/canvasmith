@@ -10,7 +10,7 @@
     "test": "node --test test/core.test.mjs",
     "test:browser": "node --test test/editor.browser.test.mjs && npm run build && node --test test/react.browser.test.mjs",
     "build": "node scripts/build.mjs",
-    "demo": "python3 -m http.server 8901"
+    "demo": "node scripts/serve.mjs 8901"
   },
   "devDependencies": {
     "playwright": "^1.63.0",

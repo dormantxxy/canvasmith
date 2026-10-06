@@ -1,0 +1,8 @@
+description = "Start a blank Canvasmith canvas, e.g. /canvasmith:blank 1200x628"
+prompt = """
+Open a blank Canvasmith canvas with the open_canvasmith tool (no image), then call wait_for_export to receive what the user exports.
+
+Size: {{args}}
+
+Read width and height from that (for example "1200x628", "1920 by 1080" or "instagram story" → 1080×1920). If no size is given, use 1080×1080.
+"""

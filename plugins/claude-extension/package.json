@@ -1,0 +1,24 @@
+{
+  "name": "@canvasmith/claude-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Canvasmith as a Claude Desktop Extension: the full image editor rendered inside the conversation (MCP App).",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node build.mjs",
+    "pack": "node build.mjs --pack",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.1.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "@modelcontextprotocol/client": "^2.1.0",
+    "esbuild": "^0.24.2"
+  }
+}

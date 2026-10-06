@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvasmith Release Notes</title>
+<meta name="description" content="What changed in every Canvasmith release, from 1.0.0 to today.">
+<style>
+  :root {
+    --bg:#ffffff; --panel:#f6f7f9; --ink:#14161a; --dim:#5b6270; --line:#e2e5ea; --accent:#2f6fe4; --accent-ink:#fff;
+    --code:#eef0f4; --kbd:#fff; --shadow:0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#14161a; --panel:#1c1f25; --ink:#eceef2; --dim:#9aa1ae; --line:#2b2f37; --accent:#5b93f5; --accent-ink:#0b1220;
+      --code:#232731; --kbd:#262a33; --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#14161a; --panel:#1c1f25; --ink:#eceef2; --dim:#9aa1ae; --line:#2b2f37; --accent:#5b93f5; --accent-ink:#0b1220;
+    --code:#232731; --kbd:#262a33; --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4);
+  }
+  * { box-sizing:border-box }
+  html { scroll-behavior:smooth; scroll-padding-top:76px }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; -webkit-font-smoothing:antialiased }
+  a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
+  code, kbd { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.88em }
+  code { background:var(--code); padding:.12em .4em; border-radius:5px }
+  kbd { background:var(--kbd); border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:.05em .45em; white-space:nowrap }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow-x:auto; line-height:1.5 }
+  pre code { background:none; padding:0 }
+
+  header.top { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px; height:56px; padding:0 20px; background:color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--line) }
+  header.top b { font-size:16px; letter-spacing:-.01em }
+  header.top .sp { flex:1 }
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font:inherit; font-size:13.5px; cursor:pointer }
+  .btn:hover { text-decoration:none; border-color:var(--accent) }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600 }
+  #menu-btn { display:none }
+
+  .layout { display:grid; grid-template-columns:260px minmax(0,1fr); max-width:1280px; margin:0 auto }
+  nav.toc { position:sticky; top:56px; align-self:start; height:calc(100vh - 56px); overflow-y:auto; padding:22px 12px 40px 20px; border-right:1px solid var(--line); font-size:13.5px }
+  nav.toc h6 { margin:18px 10px 6px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim) }
+  nav.toc h6:first-child { margin-top:0 }
+  nav.toc a { display:block; padding:5px 10px; border-radius:7px; color:var(--dim) }
+  nav.toc a:hover { background:var(--panel); color:var(--ink); text-decoration:none }
+  nav.toc a.on { background:var(--panel); color:var(--accent); font-weight:600 }
+
+  main { padding:36px clamp(20px,4vw,56px) 96px; min-width:0 }
+  section { margin-bottom:64px }
+  h1 { font-size:clamp(30px,4.4vw,44px); line-height:1.1; letter-spacing:-.025em; margin:0 0 14px }
+  h2 { font-size:26px; letter-spacing:-.02em; margin:0 0 6px; padding-top:8px }
+  h3 { font-size:17px; margin:30px 0 6px }
+  p { margin:0 0 12px; max-width:74ch } li { max-width:74ch }
+  .lead { font-size:18px; color:var(--dim); max-width:62ch }
+  .sub { color:var(--dim); margin-bottom:20px }
+  .hero { padding:8px 0 40px }
+  .hero .cta { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px }
+  figure { margin:18px 0 26px }
+  figure img { display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); background:var(--panel) }
+  figcaption { margin-top:8px; font-size:13px; color:var(--dim) }
+  .pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:18px; align-items:start }
+  .pair figure { margin:0 }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin:16px 0 }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px }
+  .card b { display:block; margin-bottom:3px }
+  .card span { color:var(--dim); font-size:13.5px }
+  table { border-collapse:collapse; width:100%; margin:12px 0 22px; font-size:14px }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); font-weight:600 }
+  .tablewrap { overflow-x:auto }
+  .note { border-left:3px solid var(--accent); background:var(--panel); padding:10px 14px; border-radius:0 9px 9px 0; margin:14px 0; max-width:74ch; font-size:14px }
+  .note b:first-child { color:var(--accent) }
+  ul, ol { padding-left:22px; margin:0 0 14px }
+  li { margin:3px 0 }
+
+  @media (max-width:900px) {
+    .layout { grid-template-columns:1fr }
+    nav.toc { position:fixed; inset:56px 0 0 0; z-index:15; height:auto; background:var(--bg); border:0; display:none; padding-bottom:80px }
+    nav.toc.open { display:block }
+    #menu-btn { display:inline-flex }
+    header.top .hide-sm { display:none }
+    header.top { gap:8px; padding:0 12px }
+    #theme { padding:7px 10px }
+  }
+  /* release-notes additions */
+  .layout.rel { grid-template-columns:220px minmax(0,1fr) }
+  .release { padding:26px 0 30px; border-top:1px solid var(--line); margin:0; scroll-margin-top:76px }
+  .release:first-of-type { border-top:0; padding-top:0 }
+  .rel-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px; margin-bottom:4px }
+  .rel-head h2 { padding:0; margin:0; font-size:28px; font-variant-numeric:tabular-nums }
+  .rel-date { color:var(--dim); font-size:14px }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; background:var(--accent); color:var(--accent-ink); vertical-align:middle }
+  .pill.soft { background:var(--panel); color:var(--dim); border:1px solid var(--line) }
+  .pill.warn { background:#e8a232; color:#251a00 }
+  .rel-title { font-size:17px; color:var(--ink); margin:2px 0 14px; max-width:70ch }
+  .rel h4 { margin:18px 0 6px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim) }
+  .rel h4.added { color:#2e9e5b } .rel h4.improved { color:var(--accent) } .rel h4.fixed { color:#d9822b }
+  .rel ul { margin:0 0 6px }
+  .rel li { margin:4px 0 }
+  .rel-links { margin-top:10px; font-size:13px; color:var(--dim) }
+  @media (max-width:900px) { .layout.rel { grid-template-columns:1fr } }
+</style>
+</head>
+<body>
+<header class="top">
+  <button class="btn" id="menu-btn" aria-label="Toggle versions" aria-expanded="false">☰</button>
+  <b>Canvasmith</b><span style="color:var(--dim)">Release notes</span>
+  <span class="sp"></span>
+  <button class="btn" id="theme" aria-label="Toggle light/dark theme">◐ Theme</button>
+  <a class="btn hide-sm" href="index.html">Docs</a>
+  <a class="btn primary" href="../apps/demo/index.html">Open the editor</a>
+</header>
+
+<div class="layout rel">
+<nav class="toc" id="toc" aria-label="Versions">
+  <h6>Versions</h6>
+  <a href="#unreleased">Unreleased</a>
+  <a href="#v1.6.0">1.6.0 <span style="opacity:.6">· Oct 5</span></a>
+  <a href="#v1.5.0">1.5.0 <span style="opacity:.6">· Oct 1</span></a>
+  <a href="#v1.4.0">1.4.0 <span style="opacity:.6">· Sep 22</span></a>
+  <a href="#v1.3.0">1.3.0 <span style="opacity:.6">· Sep 14</span></a>
+  <a href="#v1.2.0">1.2.0 <span style="opacity:.6">· Sep 6</span></a>
+  <a href="#v1.1.0">1.1.0 <span style="opacity:.6">· Sep 1</span></a>
+  <a href="#v1.0.1">1.0.1 <span style="opacity:.6">· Aug 17</span></a>
+  <a href="#v1.0.0">1.0.0 <span style="opacity:.6">· Aug 16</span></a>
+  <h6>More</h6>
+  <a href="index.html">Documentation</a>
+  <a href="../README.md">README</a>
+</nav>
+
+<main>
+<h1>Release notes</h1>
+<p class="lead">Every Canvasmith release, newest first. The project started at <b>1.0.0</b>; each minor version groups a milestone of features, and patch versions are fixes and polish.</p>
+
+<section class="release rel" id="unreleased">
+  <div class="rel-head"><h2>Unreleased</h2><span class="pill warn">In progress</span><span class="rel-date">on branch <code>bug_fixes_and_ux_enhancement</code></span></div>
+  <p class="rel-title">Offline background removal with touch-ups, and this documentation.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Offline Remove BG.</b> A new worker pipeline (<code>cutout</code> / <code>cutRefine</code>) cuts the subject out without any AI key: a plain backdrop is keyed out by colour, anything else is auto-seeded and refined with GrabCut along the edge, with soft, colour-decontaminated edges. The result is still a layer mask.</li>
+    <li><b>Keep / Remove touch-ups</b> for offline cut-outs: paint over what to keep or remove and the cut re-runs around your stroke (<code>setMaskRefine</code>, <code>canRefineCutout</code>).</li>
+    <li>A free offline <b>Remove BG</b> button stays one click away when an AI key is set.</li>
+    <li><b>Documentation page</b> (<a href="index.html">docs/</a>) with screenshots, gestures, worked examples and troubleshooting, and <code>scripts/doc-shots.mjs</code> to regenerate its images from the live demo.</li>
+    <li>This release-notes page.</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li>Browser test coverage for the offline cut-out and refine flow in both the vanilla and React shells.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.6.0">
+  <div class="rel-head"><h2>1.6.0</h2><span class="pill">Latest</span><span class="rel-date">October 5, 2026</span></div>
+  <p class="rel-title">Pen tool, right-click menu and border options.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Figma-style pen tool</b> with bezier nodes. Click for corners, click-drag for curves, close a path into a filled shape, or end it as an open stroke.</li>
+    <li><b>Vector edit mode</b> for paths: drag points and handles, add points on a segment, convert smooth ↔ corner, delete points, nudge with the arrow keys. <kbd>Enter</kbd> on a selected path opens it.</li>
+    <li><b>Right-click context menu</b>, shared by both shells: clipboard, arrange, flip, align, select-layer-under-cursor, crop, remove background, masks, and selection actions (copy / cut to new layer, invert, deselect). Failed actions show a toast.</li>
+    <li><b>Select object</b> on a marquee or lasso: a mask-seeded GrabCut shrinks a rough selection to every object inside it, including inverted and overlapping rings.</li>
+    <li><b>Border options:</b> solid, dashed or dotted style with dash and gap, inside / centre / outside position, caps and joins, behind a settings button next to Width.</li>
+    <li><b>Eye toggles</b> to hide and show a layer's fill and border independently, without losing either.</li>
+    <li>A busy spinner at the pointer while computer-vision picks run.</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li>Two-tone selection outline (deep blue over a white halo) and a themed multi-selection that read clearly on any artwork.</li>
+    <li>Expanded keyboard handling for the pen build and vector edit modes (<kbd>⌫</kbd>, <kbd>⌘Z</kbd> per point, arrows, <kbd>⌘A</kbd>).</li>
+    <li>Layer-mask engine extended, and the editor's browser tests grew to cover the new tools in both shells.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.5.0">
+  <div class="rel-head"><h2>1.5.0</h2><span class="rel-date">October 1, 2026</span></div>
+  <p class="rel-title">A redesigned right panel, AI Assist, and photo-grade adjustments.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Right-panel redesign</b> with underline tabs: Properties, Design, Stickers and AI Assist. New <b>Canvas dimensions</b> section with ratio shortcuts, and a background fill with hex, opacity and a Transparent option (drawn as a checkerboard).</li>
+    <li><b>AI Assist:</b> describe a change scoped to a selection or the whole canvas, style presets, an optional reference image, <b>Enhance prompt</b>, <b>Remove selection</b> (erase and fill) and <b>background swap</b>.</li>
+    <li><b>Remove BG</b> as a non-destructive layer mask, using the AI when a key is set or a GrabCut cut-out otherwise, plus <b>Auto Shadow</b>.</li>
+    <li><b>Photo adjustments</b> (<code>tone.js</code>): exposure, highlights, shadows, temperature, tint, vibrance, <b>tone curves</b> (RGB + per channel, with presets), an <b>HSL colour mixer</b> and a live luminance histogram.</li>
+    <li><b>Geometry</b> (<code>geometry.js</code>): straighten, vertical and horizontal keystone, and a four-corner <b>perspective editor</b>.</li>
+    <li><b>Nested groups</b> in the Layers panel with arbitrary depth, fold / unfold, drag-reorder across levels, and <b>double-click to drill into a group</b>, one level per double-click.</li>
+    <li><b>Guided Convert to layers:</b> a full review panel (<code>regions.js</code>) with live outlines and a hover preview before layers are created.</li>
+    <li><b>Corner radius</b> control for shapes, and resizable, auto-trimmed paint layers.</li>
+    <li><b>Three new ways to use Canvasmith:</b> a Claude Desktop extension (<code>.mcpb</code> MCP App), a Gemini CLI extension, and a ChatGPT app (a remote MCP server with export links).</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li>Gemini provider hardened, with more of the editor's AI actions routed through the provider registry.</li>
+    <li>PNG / JPEG export and project serialisation updated for the new layer types.</li>
+    <li>The React shell kept in step with the vanilla demo across the whole redesign.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.4.0">
+  <div class="rel-head"><h2>1.4.0</h2><span class="rel-date">September 16 – 22, 2026</span></div>
+  <p class="rel-title">Autosave, project files and a round of painting-tool polish.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Session autosave and restore</b> (<code>session.js</code>), shared by both shells. Your document survives a reload; when browser storage is tight, the heaviest data is shed first instead of failing.</li>
+    <li><b>Recoverable New:</b> the previous document goes to a restorable trash rather than being destroyed, backed by <code>Editor#reset()</code>.</li>
+    <li><b><code>.canvasmith</code> project files:</b> export and re-open a document with every layer, mask and adjustment intact.</li>
+    <li><b>Export size</b> of 1×, 2× or 3×, with the output dimensions shown in the menu.</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li><b>Painting:</b> a choice between painting on the image itself or on a new layer, a live brush cursor ring, and a clone-stamp status with a reset-source button.</li>
+    <li><b>Gradient tool:</b> handles stay on screen so a gradient can be re-aimed after it is drawn.</li>
+    <li><b>Crop</b> and <b>selection</b> tools: smoother handles, restoring the correct crop target, and several selection fixes.</li>
+    <li><b>Zoom-to-placement:</b> the view now follows where new content is placed.</li>
+    <li>Updates to the CV worker behind object picks, and an undo history that can be re-baselined after a restore so one undo never wipes a restored document.</li>
+    <li>JPEG export flattens transparency onto white instead of black.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.3.0">
+  <div class="rel-head"><h2>1.3.0</h2><span class="rel-date">September 11 – 14, 2026</span></div>
+  <p class="rel-title">Stickers, ad copy and Convert to layers.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Stickers</b> tab with categorised vector stickers (sale bursts, badges, ribbons, price tags, arrows, accents) that recolour like any shape.</li>
+    <li><b>Ad copy:</b> ready-made <b>CTA</b>, <b>Badge</b>, <b>Price</b> and <b>Brand</b> lockups, with auto-fit text and legibility shadows (<code>adtext.js</code>).</li>
+    <li><b>Promo layouts</b> built from templates (<code>templates.js</code>).</li>
+    <li><b>Background tools:</b> extend the image to fill the artboard, AI-extend any empty canvas around it, and fill with a colour or an image.</li>
+    <li><b>Convert to layers:</b> detect regions and turn them into editable layers, with object boxes, merged object selections, per-region cut-outs and an animated reveal.</li>
+    <li><b>Clip a layer to a selection</b> (and clear the clip), and drag-to-reorder layers to any position.</li>
+    <li>Hold <kbd>Space</kbd> to pan with any tool, and a select-active-or-centre fallback for object select.</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li>The React shell gained near-complete parity with the vanilla demo, backed by a new Playwright suite for it.</li>
+    <li>AI region detection and the Gemini provider fixed and tightened.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.2.0">
+  <div class="rel-head"><h2>1.2.0</h2><span class="rel-date">September 6 – 7, 2026</span></div>
+  <p class="rel-title">Layer masks, adjustment layers, typography and an offline OpenCV.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>Layer masks:</b> paintable, non-destructive masks on image and paint layers, with invert.</li>
+    <li><b>Adjustment layers</b> that apply to everything beneath them in the stack.</li>
+    <li><b>Typography panel:</b> font (a curated system and Google Fonts list), size, weight, style, alignment and letter spacing.</li>
+    <li><b>Multi-stop linear and radial gradients</b>, for both the gradient paint tool and vector shape fills.</li>
+    <li><b>Auto-detect objects</b> tool, wired to the CV engine's detector.</li>
+    <li><b>Shared keyboard shortcuts</b> (<code>installKeybindings</code>): tool-switch letters and arrow-key nudge, identical in both shells.</li>
+    <li>A real <b>Playwright browser test suite</b> for the DOM-dependent editor code.</li>
+  </ul>
+  <h4 class="improved">Improved</h4>
+  <ul>
+    <li><b>OpenCV is now vendored</b> and served locally, so the editor has no runtime dependency on a CDN and the static site works from disk.</li>
+    <li>The React Properties panel brought to parity with the demo's.</li>
+  </ul>
+  <h4 class="fixed">Fixed</h4>
+  <ul>
+    <li>A brush at hardness 1 painted nothing at all.</li>
+    <li>The paint gradient tool never fired because its drag handler was not wired up.</li>
+    <li>Custom filters (masks, adjustments) could silently do nothing under WebGL; Canvas2D filtering is now forced.</li>
+    <li>Rapid double-clicks could let an earlier wand pick overwrite a newer selection; stale results are now dropped. Likewise a magnetic-edge map can no longer land after a resize or crop.</li>
+    <li>Deleting the layer you are painting a mask on now tears the mask-edit state down cleanly.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.1.0">
+  <div class="rel-head"><h2>1.1.0</h2><span class="rel-date">September 1, 2026</span></div>
+  <p class="rel-title">OpenCV-powered selections and a Properties panel.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b>OpenCV-backed selection tools</b> running in a Web Worker: <b>object select</b> and <b>hover select</b> with a live preview, falling back to the plain colour-flood wand when CV is unavailable.</li>
+    <li><b>Properties panel</b> in both the vanilla demo and the React shell for inspecting and editing the selection and the active layer.</li>
+    <li><b>Image filters</b> and colour utilities: recolour pixels under a selection, gradient-stop helpers, filter specs.</li>
+    <li><b>Click-drag shape sizing</b>: draw a shape at the size you drag, instead of dropping a default one.</li>
+    <li><b>Multi-select alignment:</b> align left, right, top, bottom and centre across several layers.</li>
+    <li>Selection pixel helpers shared by fills, gradients and filters (<code>selectionClipObject</code>, <code>renderSelectedPixels</code>).</li>
+  </ul>
+  <h4 class="fixed">Fixed</h4>
+  <ul>
+    <li>Two accidentally committed worktree links broke <code>git clone</code> for other people; they were removed and ignored.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.0.1">
+  <div class="rel-head"><h2>1.0.1</h2><span class="rel-date">August 17 – 21, 2026</span></div>
+  <p class="rel-title">A showcase, a live demo and publish prep.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li>README showcase: a hero animation of a moodboard unpacking into labelled layers, plus five stills of the tools working for real.</li>
+    <li>Selection and crop overlay rendering in the demo (dashed outline, scrim, thirds guides, handles), as a reference for custom UIs.</li>
+    <li>Live demo hosting on Netlify, with the bookmarklet, browser extension and README pointing at it.</li>
+    <li>npm publish metadata, and a README and LICENSE for each package.</li>
+  </ul>
+  <h4 class="fixed">Fixed</h4>
+  <ul>
+    <li>Bucket fill and gradient painted nothing when they were the first action on a fresh document.</li>
+    <li>Undoing the last paint layer no longer leaves an orphaned drawing canvas behind.</li>
+  </ul>
+</section>
+
+<section class="release rel" id="v1.0.0">
+  <div class="rel-head"><h2>1.0.0</h2><span class="rel-date">August 16, 2026</span></div>
+  <p class="rel-title">The first release: a headless image editor on Fabric.js, with a UI, an AI seam and an import bridge.</p>
+  <h4 class="added">Added</h4>
+  <ul>
+    <li><b><code>@canvasmith/core</code>:</b> one headless <code>Editor</code> facade with Fabric.js as a peer dependency.</li>
+    <li><b>Paint engine:</b> brush, pencil, eraser, clone stamp, spot heal, dodge, burn, sponge and red-eye, with selection-clipped strokes.</li>
+    <li><b>Selections:</b> rectangular and elliptical marquee, lasso and magic wand with contour tracing.</li>
+    <li><b>Layers:</b> shapes and text, snapshot-based undo and redo, a zoom-aware crop, and export and serialise.</li>
+    <li><b>AI provider seam:</b> the editor never talks to a model directly. The bundled <code>GeminiProvider</code> runs on the user's own free key, and hosts can register their own server-side provider (see <code>adapters/ditto</code>). With no provider, AI reports itself unavailable and the editor keeps working.</li>
+    <li><b>Import bridge:</b> <code>?image=</code>, <code>#img=</code>, <code>postMessage</code> with an acknowledgement, and <code>localStorage</code>; an in-page <b>bookmarklet</b> that works on auth-gated images, and an <b>MV3 browser extension</b> with a right-click menu.</li>
+    <li><b><code>@canvasmith/react</code>:</b> a drop-in <code>&lt;CanvasmithEditor/&gt;</code> and a framework-free <code>Canvasmith.mount()</code> standalone bundle.</li>
+    <li>A vanilla demo app that drives the core directly, 12 unit tests over the pure logic, CI on Node 20 and 22, and an MIT licence.</li>
+  </ul>
+</section>
+</main>
+</div>
+
+<script>
+  const root = document.documentElement;
+  try { const t = localStorage.getItem('cm-docs-theme'); if (t) root.dataset.theme = t; } catch {}
+  document.getElementById('theme').onclick = () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('cm-docs-theme', root.dataset.theme); } catch {}
+  };
+  const toc = document.getElementById('toc'), menu = document.getElementById('menu-btn');
+  menu.onclick = () => { const o = toc.classList.toggle('open'); menu.setAttribute('aria-expanded', o); };
+  toc.addEventListener('click', e => { if (e.target.closest('a')) { toc.classList.remove('open'); menu.setAttribute('aria-expanded', false); } });
+  const links = [...toc.querySelectorAll('a[href^="#"]')], byId = id => links.find(a => a.getAttribute('href') === '#' + id);
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { links.forEach(a => a.classList.remove('on')); const a = byId(e.target.id); if (a) a.classList.add('on'); }
+  }), { rootMargin: '-72px 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach(s => io.observe(s));
+</script>
+</body>
+</html>

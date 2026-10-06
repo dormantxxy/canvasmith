@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvasmith</title>
+<style>
+  /* Mirrors the editor's own tokens (CanvasmithEditor.jsx) so the strip reads as part of it;
+     html[data-mode] follows the editor's data-cm-mode, including its own theme toggle. */
+  :root, html[data-mode=dark] { --bg: #141417; --ink: #f5f3ee; --dim: #aeaca4; --line: rgba(255,255,255,.07); --accent: #ef6a2d; }
+  html[data-mode=light] { --bg: #faf7f0; --ink: #26221c; --dim: #5e594f; --line: rgba(30,26,18,.11); --accent: #c85a24; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  #shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  #bar { flex: none; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; background: var(--bg);
+         border-bottom: 1px solid var(--line); color: var(--ink); font: 500 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #bar strong { flex: none; font-weight: 700; }
+  #where { margin-right: auto; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #editor { flex: 1; min-height: 0; position: relative; }
+  /* the shell's dev tagline ("React shell on the headless core") means nothing to an end user */
+  #editor .cm-top > .cm-note { display: none; }
+  /* laptop-width tab: keep the editor header on one line so Export stays one tidy button.
+     The strip above already says what this is, and search stays one ⌘K away. */
+  #editor .cm-top .cm-btn { white-space: nowrap; }
+  @media (max-width: 1099px) {
+    #editor .cm-top { gap: 6px; }
+    #editor .cm-top > strong, #editor .cm-top .cm-btn[title^="Search tools"] { display: none; }
+  }
+  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 1000; max-width: calc(100% - 32px);
+           padding: 8px 14px; border-radius: 8px; background: #1b1b20; color: #f5f3ee; font: 500 12px/1.4 system-ui, sans-serif;
+           box-shadow: 0 4px 18px rgba(0,0,0,.35); overflow-wrap: anywhere; }
+  #toast[data-kind=ok] { background: #1e3a17; }
+  #toast[data-kind=err] { background: #5a1a17; }
+</style>
+<!--FABRIC-->
+</head>
+<body>
+<div id="shell">
+  <div id="bar">
+    <strong>Gemini CLI</strong>
+    <span id="where">Export an image to hand it back to Gemini</span>
+  </div>
+  <div id="editor"></div>
+</div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<!--APP-->
+</body>
+</html>

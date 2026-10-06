@@ -16,7 +16,12 @@ export const CAPABILITIES = [
                        //   that only reads (imageDataURL, instruction) keeps working unchanged, it
                        //   just ignores the mask a caller passes. AIRegistry#run forwards whatever
                        //   args a caller supplies, so no registry change was needed to add this.
+                       //   An optional 4th argument {reference} (an image dataURL) is a style/
+                       //   content reference the model should take cues from; same additive rule.
   'generateImage',    // (prompt, opts)              -> imageDataURL   text-to-image insert
+                       //   (opts.reference: optional reference image dataURL)
+  'enhancePrompt',    // (text, opts)                -> string         rewrite a short edit request
+                       //   into a clearer, more specific instruction (opts.kind: 'edit'|'background')
   'removeBackground', // (imageDataURL)              -> imageDataURL   subject cutout with alpha
   'detectRegions',    // (imageDataURL)              -> [{type,bbox:{x,y,width,height in %},content?}]
   'describe',         // (imageDataURL)              -> string         alt-text / layer naming

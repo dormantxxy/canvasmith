@@ -1,0 +1,8 @@
+description = "Open an image in the Canvasmith editor (in your browser) and get the edited result back."
+prompt = """
+Open Canvasmith for the user with the open_canvasmith tool, then call wait_for_export to receive what they export.
+
+What to open: {{args}}
+
+If that names an image file, pass its absolute path (resolve relative paths against the current directory) or its URL as `image`. If it gives a size like 1200x628, open a blank canvas of that size. If it's empty, open a blank 1080×1080 canvas.
+"""

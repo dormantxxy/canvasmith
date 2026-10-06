@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvasmith Docs</title>
+<meta name="description" content="Everything Canvasmith can do: tools, layers, adjustments, AI, export, and how to embed it.">
+<style>
+  :root {
+    --bg:#ffffff; --panel:#f6f7f9; --ink:#14161a; --dim:#5b6270; --line:#e2e5ea; --accent:#2f6fe4; --accent-ink:#fff;
+    --code:#eef0f4; --kbd:#fff; --shadow:0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#14161a; --panel:#1c1f25; --ink:#eceef2; --dim:#9aa1ae; --line:#2b2f37; --accent:#5b93f5; --accent-ink:#0b1220;
+      --code:#232731; --kbd:#262a33; --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#14161a; --panel:#1c1f25; --ink:#eceef2; --dim:#9aa1ae; --line:#2b2f37; --accent:#5b93f5; --accent-ink:#0b1220;
+    --code:#232731; --kbd:#262a33; --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4);
+  }
+  * { box-sizing:border-box }
+  html { scroll-behavior:smooth; scroll-padding-top:76px }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; -webkit-font-smoothing:antialiased }
+  a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
+  code, kbd { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.88em }
+  code { background:var(--code); padding:.12em .4em; border-radius:5px }
+  kbd { background:var(--kbd); border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:.05em .45em; white-space:nowrap }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow-x:auto; line-height:1.5 }
+  pre code { background:none; padding:0 }
+
+  header.top { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px; height:56px; padding:0 20px; background:color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--line) }
+  header.top b { font-size:16px; letter-spacing:-.01em }
+  header.top .sp { flex:1 }
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font:inherit; font-size:13.5px; cursor:pointer }
+  .btn:hover { text-decoration:none; border-color:var(--accent) }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600 }
+  #menu-btn { display:none }
+
+  .layout { display:grid; grid-template-columns:260px minmax(0,1fr); max-width:1280px; margin:0 auto }
+  nav.toc { position:sticky; top:56px; align-self:start; height:calc(100vh - 56px); overflow-y:auto; padding:22px 12px 40px 20px; border-right:1px solid var(--line); font-size:13.5px }
+  nav.toc h6 { margin:18px 10px 6px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim) }
+  nav.toc h6:first-child { margin-top:0 }
+  nav.toc a { display:block; padding:5px 10px; border-radius:7px; color:var(--dim) }
+  nav.toc a:hover { background:var(--panel); color:var(--ink); text-decoration:none }
+  nav.toc a.on { background:var(--panel); color:var(--accent); font-weight:600 }
+
+  main { padding:36px clamp(20px,4vw,56px) 96px; min-width:0 }
+  section { margin-bottom:64px }
+  h1 { font-size:clamp(30px,4.4vw,44px); line-height:1.1; letter-spacing:-.025em; margin:0 0 14px }
+  h2 { font-size:26px; letter-spacing:-.02em; margin:0 0 6px; padding-top:8px }
+  h3 { font-size:17px; margin:30px 0 6px }
+  p { margin:0 0 12px; max-width:74ch } li { max-width:74ch }
+  .lead { font-size:18px; color:var(--dim); max-width:62ch }
+  .sub { color:var(--dim); margin-bottom:20px }
+  .hero { padding:8px 0 40px }
+  .hero .cta { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px }
+  figure { margin:18px 0 26px }
+  figure img { display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); background:var(--panel) }
+  figcaption { margin-top:8px; font-size:13px; color:var(--dim) }
+  .pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:18px; align-items:start }
+  .pair figure { margin:0 }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin:16px 0 }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px }
+  .card b { display:block; margin-bottom:3px }
+  .card span { color:var(--dim); font-size:13.5px }
+  table { border-collapse:collapse; width:100%; margin:12px 0 22px; font-size:14px }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); font-weight:600 }
+  .tablewrap { overflow-x:auto }
+  .note { border-left:3px solid var(--accent); background:var(--panel); padding:10px 14px; border-radius:0 9px 9px 0; margin:14px 0; max-width:74ch; font-size:14px }
+  .note b:first-child { color:var(--accent) }
+  ul, ol { padding-left:22px; margin:0 0 14px }
+  li { margin:3px 0 }
+
+  @media (max-width:900px) {
+    .layout { grid-template-columns:1fr }
+    nav.toc { position:fixed; inset:56px 0 0 0; z-index:15; height:auto; background:var(--bg); border:0; display:none; padding-bottom:80px }
+    nav.toc.open { display:block }
+    #menu-btn { display:inline-flex }
+    header.top .hide-sm { display:none }
+    header.top { gap:8px; padding:0 12px }
+    #theme { padding:7px 10px }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <button class="btn" id="menu-btn" aria-label="Toggle contents" aria-expanded="false">☰</button>
+  <b>Canvasmith</b><span style="color:var(--dim)">Docs</span>
+  <span class="sp"></span>
+  <button class="btn" id="theme" aria-label="Toggle light/dark theme">◐ Theme</button>
+  <a class="btn hide-sm" href="release-notes.html">Release notes</a>
+  <a class="btn hide-sm" href="../README.md">README</a>
+  <a class="btn primary" href="../apps/demo/index.html">Open the editor</a>
+</header>
+
+<div class="layout">
+<nav class="toc" id="toc" aria-label="Contents">
+  <h6>Start</h6>
+  <a href="#overview">Overview</a>
+  <a href="#quick-start">Quick start</a>
+  <a href="#interface">The interface</a>
+  <a href="#gestures">Gestures &amp; tips</a>
+  <h6>Examples</h6>
+  <a href="#examples">Worked examples</a>
+  <a href="#ex-group">Edit inside a group</a>
+  <a href="#ex-post">Build a social post</a>
+  <a href="#ex-cutout">Cut out a subject</a>
+  <a href="#ex-grade">Colour-grade a photo</a>
+  <a href="#ex-api">Do it from code</a>
+  <h6>Editing</h6>
+  <a href="#tools">Tool reference</a>
+  <a href="#selection">Selections</a>
+  <a href="#painting">Painting &amp; retouching</a>
+  <a href="#shapes">Shapes, pen &amp; borders</a>
+  <a href="#text">Text &amp; ad copy</a>
+  <a href="#layers">Layers, masks &amp; groups</a>
+  <a href="#adjust">Adjustments &amp; geometry</a>
+  <a href="#stickers">Stickers &amp; design tab</a>
+  <a href="#context-menu">Context menu &amp; search</a>
+  <h6>AI</h6>
+  <a href="#ai">AI Assist</a>
+  <a href="#convert">Convert to layers</a>
+  <a href="#removebg">Remove background</a>
+  <h6>Output</h6>
+  <a href="#canvas">Canvas &amp; zoom</a>
+  <a href="#export">Export &amp; projects</a>
+  <a href="#autosave">Autosave &amp; recovery</a>
+  <h6>Reference</h6>
+  <a href="#troubleshooting">Troubleshooting</a>
+  <a href="#shortcuts">Keyboard shortcuts</a>
+  <a href="#embedding">Embedding &amp; API</a>
+  <a href="#plugins">Plugins</a>
+  <a href="#repo">Repository &amp; development</a>
+  <a href="release-notes.html">Release notes ↗</a>
+</nav>
+
+<main>
+<section class="hero" id="overview">
+  <h1>A Photoshop-grade image editor<br>for the web.</h1>
+  <p class="lead">Canvasmith is a headless editing core plus an optional UI, built on Fabric.js. Everything on the board is a live, labelled, editable layer — images, shapes, text, paths, masks and adjustments — and every control in the UI is one public API call.</p>
+  <div class="hero cta" style="padding:0">
+    <a class="btn primary" href="../apps/demo/index.html">Open the editor</a>
+    <a class="btn" href="#quick-start">Quick start</a>
+    <a class="btn" href="#embedding">Embed it</a>
+  </div>
+  <figure style="margin-top:32px">
+    <img src="shots/overview.png" alt="The Canvasmith editor with a photo, a title and a badge on the canvas, layers on the left and properties on the right" loading="eager">
+    <figcaption>The editor: tool rail, layers panel, canvas, and the Properties panel for the selected layer.</figcaption>
+  </figure>
+  <div class="cards">
+    <div class="card"><b>Layer-first</b><span>Raster images, vector shapes, text, pen paths, paint layers, groups and adjustment layers all live in one stack.</span></div>
+    <div class="card"><b>Non-destructive</b><span>Adjustments, geometry, masks and borders are parameters, not baked pixels, until you export.</span></div>
+    <div class="card"><b>Local-first CV</b><span>Magic wand, object select and background removal run in the browser with OpenCV — no key, no upload.</span></div>
+    <div class="card"><b>Optional AI</b><span>Plug in any provider (a free Gemini key is built in) for generative edits. No provider, nothing breaks.</span></div>
+    <div class="card"><b>Headless or complete</b><span>Import <code>@canvasmith/core</code> for the engine, or mount the full React UI with one script tag.</span></div>
+    <div class="card"><b>Everywhere</b><span>Bookmarklet, browser extension, and apps for Claude, Gemini CLI and ChatGPT.</span></div>
+  </div>
+</section>
+
+<section id="quick-start">
+  <h2>Quick start</h2>
+  <p class="sub">Three ways in, from zero build to fully custom UI.</p>
+
+  <h3>1. Use the hosted editor</h3>
+  <p>Open the editor and drop an image onto the canvas, or paste one from the clipboard. To open a specific image, pass its URL: <code>?image=&lt;url&gt;</code>.</p>
+
+  <h3>2. Drop the complete tool into a page (no build)</h3>
+<pre><code>&lt;div id="editor" style="height:100vh"&gt;&lt;/div&gt;
+&lt;script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"&gt;&lt;/script&gt;
+&lt;script src="path/to/@canvasmith/react/dist/standalone.js"&gt;&lt;/script&gt;
+&lt;script&gt;Canvasmith.mount('#editor', { width: 1080, height: 1080 });&lt;/script&gt;</code></pre>
+
+  <h3>3. Headless — bring your own UI</h3>
+<pre><code>import { Editor, GeminiProvider } from '@canvasmith/core';
+
+const ed = new Editor({ fabric, canvasEl: myCanvas, width: 1080, height: 1080 });
+ed.setTool('brush');
+ed.setToolOptions({ size: 40, color: '#ff5722' });
+ed.on('history', ({ past, future }) =&gt; renderUndoButtons(past, future));
+ed.ai.register(new GeminiProvider());   // or your own backend provider
+const png = ed.exportPNG();</code></pre>
+  <p>The vanilla demo in <code>apps/demo</code> is exactly this: every control there is one public API call. See <a href="#embedding">Embedding &amp; API</a>.</p>
+</section>
+
+<section id="interface">
+  <h2>The interface</h2>
+  <p class="sub">Five regions, each with one job.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Region</th><th>What it does</th></tr>
+    <tr><td><b>Top bar</b></td><td><b>New</b> (recoverable), <b>Open image…</b>, undo / redo, <b>Search</b> (<kbd>⌘K</kbd>), <b>Canvas size</b>, zoom pill, light/dark toggle, autosave status, <b>Compare</b> with the first-loaded version, and <b>Export image</b>.</td></tr>
+    <tr><td><b>Tool rail</b> (far left)</td><td>Grouped tools. A small corner caret means a flyout of siblings; press the group's letter again to cycle. Duplicate and delete sit at the bottom.</td></tr>
+    <tr><td><b>Left panel</b></td><td><b>Layers</b> (the scene list: visibility, lock, thumbnails, groups, drag to reorder) and <b>AI Vision</b> (detected subjects and engine status). A pinned card offers <b>Auto-Detect Subjects</b>, <b>Remove BG</b> and <b>Auto Shadow</b>.</td></tr>
+    <tr><td><b>Canvas</b></td><td>The artboard. Direct manipulation: click to select, drag to move, handles to scale and rotate, with snapping and alignment guides.</td></tr>
+    <tr><td><b>Right panel</b></td><td>Four tabs: <b>Properties</b> (the active tool's options on top, then the selected layer's own properties), <b>Design</b>, <b>Stickers</b> and <b>AI Assist</b>.</td></tr>
+  </table></div>
+  <p>Both side panels collapse with the small arrows on the canvas edge. The header folds down on narrow windows.</p>
+  <div class="pair">
+    <figure><img src="shots/theme_light.png" alt="The editor in light theme" loading="lazy"><figcaption>Light theme. The toggle follows your system setting until you pick one.</figcaption></figure>
+    <figure><img src="shots/rail_flyout.png" alt="Selection tool group flyout open on the rail" loading="lazy"><figcaption>A rail flyout lists a group's tools with their shortcut letters.</figcaption></figure>
+  </div>
+</section>
+
+<section id="gestures">
+  <h2>Gestures &amp; tips</h2>
+  <p class="sub">The small interactions that make the editor fast. Most are invisible until you know them.</p>
+
+  <h3>Double-click does a lot</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Double-click on…</th><th>What happens</th></tr>
+    <tr><td>A <b>group</b> on the canvas (Move tool)</td><td>Enters the group and selects the member under the cursor. Double-click again to go one level deeper in a nested group. A plain click still selects the whole group. <a href="#ex-group">See the example ↓</a></td></tr>
+    <tr><td>A <b>layer name</b> in the Layers panel</td><td>Renames the layer inline. <kbd>Enter</kbd> (or clicking away) saves, <kbd>Esc</kbd> cancels. Click the row, then click again within about 0.4 s.</td></tr>
+    <tr><td>A <b>text layer</b></td><td>Edits the text in place. While typing, shortcuts are paused so <kbd>⌘C</kbd>, <kbd>⌘V</kbd>, arrows and <kbd>⌫</kbd> behave as text editing.</td></tr>
+    <tr><td>A <b>pen path</b> (Move tool)</td><td>Opens vector edit mode so you can drag points and handles. Same as pressing <kbd>Enter</kbd> with the path selected.</td></tr>
+    <tr><td>A <b>point</b> in vector edit mode</td><td>Toggles it between <i>smooth</i> and <i>corner</i>.</td></tr>
+    <tr><td>A <b>segment</b> in vector edit mode</td><td>Adds a new point exactly where you clicked.</td></tr>
+    <tr><td>An <b>Adjust slider row</b> or geometry slider</td><td>Resets just that control to neutral. <a href="#ex-reset">See the example ↓</a></td></tr>
+    <tr><td>A <b>curve point</b> in the Curves editor</td><td>Removes that point (the two end points stay).</td></tr>
+  </table></div>
+
+  <h3>Modifier keys</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Gesture</th><th>Result</th></tr>
+    <tr><td><kbd>⌥</kbd>-drag a layer</td><td>Drags a copy and leaves the original where it started.</td></tr>
+    <tr><td><kbd>⇧</kbd>-click / <kbd>⌘</kbd>-click a layer row</td><td>Adds it to a multi-selection; then <kbd>⌘G</kbd> groups them.</td></tr>
+    <tr><td><kbd>⇧</kbd> / <kbd>⌥</kbd> with a selection tool</td><td>Add to / subtract from the current selection.</td></tr>
+    <tr><td><kbd>⇧</kbd> while drawing a marquee</td><td>Constrains to a square (or circle).</td></tr>
+    <tr><td><kbd>⌥</kbd>-click or <kbd>⇧</kbd>-click with Clone / Heal</td><td>Sets the source point.</td></tr>
+    <tr><td>Hold <kbd>Space</kbd> with any tool</td><td>Temporarily pans the canvas (the hand cursor appears).</td></tr>
+    <tr><td>Mouse wheel / trackpad pinch</td><td>Zooms around the cursor (10 %–500 %).</td></tr>
+    <tr><td>Right-click</td><td>Opens the context menu for whatever is under the cursor.</td></tr>
+    <tr><td>Drag a layer near an edge or another layer</td><td>Snaps with guide lines. Toggle with the magnet in the Layers toolbar.</td></tr>
+  </table></div>
+  <div class="note"><b>Tip</b> Press <kbd>⌘K</kbd> and type what you want (“fill”, “crop”, “mask”). It's the fastest way to find a tool you don't remember a shortcut for.</div>
+</section>
+
+<section id="examples">
+  <h2>Worked examples</h2>
+  <p class="sub">Short, end-to-end recipes. Each one uses only what's in the demo.</p>
+
+  <h3 id="ex-group">Example 1 — Edit one item inside a group</h3>
+  <p>You built a card from a rectangle, an avatar circle and a title, then grouped them so they move as one. Now you want to recolour only the avatar.</p>
+  <ol>
+    <li>Select the three layers (drag a marquee with the Move tool, or <kbd>⇧</kbd>-click the rows in the Layers panel).</li>
+    <li>Press <kbd>⌘G</kbd>. A <b>Group</b> row appears with the members nested underneath; click the chevron to fold or unfold it.</li>
+    <li>Click the card once: the <i>whole group</i> is selected, so you can move, scale or rotate it as one unit.</li>
+    <li><b>Double-click the avatar.</b> The selection drops into the group and lands on the circle itself. The Properties panel now says <i>ellipse</i>.</li>
+    <li>Change its fill to any colour. Only the avatar changes; the rest of the card is untouched.</li>
+    <li>Click empty canvas or press <kbd>Esc</kbd> to leave the group. <kbd>⌘Z</kbd> undoes the recolour as one step.</li>
+  </ol>
+  <div class="pair">
+    <figure><img src="shots/group_layers.png" alt="Layers panel showing a Group row expanded to Quiet light, Avatar and Card members" loading="lazy"><figcaption>After <kbd>⌘G</kbd>: the group row with its members nested beneath it.</figcaption></figure>
+    <figure><img src="shots/group_enter.png" alt="The Avatar ellipse selected inside the group after a double-click, with its own handles and properties" loading="lazy"><figcaption>After double-clicking the circle: the member itself is selected (handles on the circle only), and the Layers row for <b>Avatar</b> is highlighted.</figcaption></figure>
+  </div>
+  <div class="note"><b>Good to know</b> You can also select a member straight from the Layers panel by clicking its nested row. Nested groups work to any depth — double-click once per level. Reordering by drag works across levels too, and a group can't be dropped into its own descendants.</div>
+
+  <h3 id="ex-post">Example 2 — Build a social post in two minutes</h3>
+  <figure>
+    <img src="shots/recipe_post.png" alt="A candle photo with a dark scrim along the bottom, a bold white headline, a Shop the collection button and a NEW badge" loading="lazy">
+    <figcaption>The result: photo, scrim, headline, CTA and badge, each its own editable layer.</figcaption>
+  </figure>
+  <ol>
+    <li><b>Start from the photo:</b> drop an image onto the canvas, or open the editor with <code>?image=&lt;url&gt;</code>. Pick a ratio in <b>Canvas dimensions</b> (for example <b>4:5</b> for a feed post).</li>
+    <li><b>Add a scrim for legibility:</b> pick the Rectangle tool (<kbd>U</kbd>), drag a band along the bottom, set the fill to black and lower the layer <b>Opacity</b> to about 55 %. Text on busy photos now reads clearly.</li>
+    <li><b>Headline:</b> press <kbd>T</kbd>, click above the scrim, type, then set size 64, weight Bold and white in the Typography panel.</li>
+    <li><b>Call to action:</b> <b>Design → CTA</b> drops in a ready-made pill button with an arrow (it reads “Shop now”). Drag it under the headline; guide lines snap it to the headline's left edge, and you can recolour or resize it like any layer. For custom button copy, pass <code>text</code> to <code>addCTA</code> from code (<a href="#ex-api">Example 7</a>), as this screenshot does.</li>
+    <li><b>Badge:</b> <b>Design → Badge</b> adds a “Sale” pill; drag it to the top-right or use the alignment buttons. (This screenshot uses <code>addBadge(null, { text: 'New' })</code>.)</li>
+    <li><b>Tidy and ship:</b> select the scrim, headline and CTA and press <kbd>⌘G</kbd> to group them as “Copy”. Then <b>Export image → PNG</b> at <b>2×</b>.</li>
+  </ol>
+
+  <h3 id="ex-cutout">Example 3 — Cut out a subject and put it on a new background</h3>
+  <ol>
+    <li>Select the photo layer and click <b>Remove BG</b> (left panel or right-click menu). The subject is cut out <i>as a layer mask</i>; nothing is deleted.</li>
+    <li>If the edge misses a bit, the banner “Editing layer mask” appears. Use <b>Keep</b> to paint over parts that should stay and <b>Remove</b> for parts that shouldn't. The cut re-runs around your strokes. Then click <b>Done editing mask</b>.</li>
+    <li>Add a backdrop: the Rectangle tool, a gradient fill, then <b>Send to back</b> (<kbd>[</kbd>).</li>
+    <li>Click <b>Auto Shadow</b> to seat the subject on the new background with a soft shadow.</li>
+    <li>Changed your mind? Right-click → <b>Remove mask</b> and the original pixels are back.</li>
+  </ol>
+  <figure>
+    <img src="shots/removebg.png" alt="Cut-out candle over a gradient backdrop" loading="lazy">
+    <figcaption>The finished composite. See <a href="#removebg">Remove background</a> for the touch-up screenshot.</figcaption>
+  </figure>
+
+  <h3 id="ex-grade">Example 4 — Colour-grade a photo non-destructively</h3>
+  <ol>
+    <li>Select the image, open <b>Properties → Adjust</b>. Start with <b>Exposure</b> (+0.25) and <b>Contrast</b> (112).</li>
+    <li>Warm it with <b>Temp</b> (+22) and add punch with <b>Saturation</b> / <b>Vibrance</b>.</li>
+    <li>Open <b>Curves</b> for a gentle S-curve: click the line to add a point, drag it, and double-click it to remove it. Switch the R / G / B tabs to tint shadows or highlights.</li>
+    <li>Click <b>Compare</b> in the top bar for a before/after view of the first-loaded version against your current edit. <b>Close</b> or <kbd>Esc</kbd> returns to the canvas.</li>
+    <li>To grade several layers at once, click the <b>Adjustment layer</b> button instead: its settings apply to everything beneath it.</li>
+  </ol>
+  <p>The finished look is the same as in the <a href="#adjust">Adjustments screenshot</a>.</p>
+
+  <h3 id="ex-reset">Example 5 — Undo one slider without touching the rest</h3>
+  <div class="pair">
+    <figure><img src="shots/slider_reset.png" alt="Adjust panel with Exposure at +0.80 and Saturation at 160" loading="lazy"><figcaption>Exposure and Saturation pushed too far.</figcaption></figure>
+    <div>
+      <p><b>Double-click the Exposure row.</b> Only Exposure snaps back to 0.00; Saturation stays at 160. To reset everything on that layer, use <b>Reset</b> at the bottom of the Adjust section. Geometry sliders behave the same way.</p>
+      <p>For a single step back instead, <kbd>⌘Z</kbd> undoes one slider drag as one history step, however long the drag was.</p>
+    </div>
+  </div>
+
+  <h3 id="ex-selection">Example 6 — Select an object and move it to its own layer</h3>
+  <ol>
+    <li>Choose the <b>Magic wand (object)</b> (<kbd>A</kbd>) and click the candle. A marching-ants outline hugs its silhouette. Missed a bit? <kbd>⇧</kbd>-click it; grabbed too much? <kbd>⌥</kbd>-click. Tune with <kbd>[</kbd> / <kbd>]</kbd>.</li>
+    <li>Press <kbd>⌘J</kbd> to copy the selected pixels to a new layer, or right-click → <b>Cut to new layer</b> to lift them out and leave a hole.</li>
+    <li>Now the candle is its own layer: move it, scale it, give it a shadow, or put something behind it.</li>
+    <li>Press <kbd>Esc</kbd> to clear the selection.</li>
+  </ol>
+
+  <h3 id="ex-api">Example 7 — The same thing from code</h3>
+  <p>Everything above is one method call on the editor, so a post like Example 2 can be built headlessly:</p>
+<pre><code>import { Editor } from '@canvasmith/core';
+
+const ed = new Editor({ fabric, canvasEl, width: 1080, height: 1350 });
+
+await ed.addImage('/photo.jpg');                 // a layer, fitted to the artboard
+ed.addCTA(null, { text: 'Shop the collection' }); // a ready-made button layer
+ed.addBadge(null, { text: 'New' });
+
+// react to what the user does
+ed.on('selection', sel =&gt; console.log('selection', sel));
+ed.on('history',   ({ past, future }) =&gt; updateUndoButtons(past, future));
+
+// read the layer tree (groups carry .children), change a layer by id
+const top = ed.layers()[0];
+ed.setLayer(top.id, { opacity: 0.9 });
+
+// group the current selection, then export
+ed.selectAllLayers();
+ed.groupSelection();
+const png = ed.exportPNG(2);                     // a PNG data URL at 2×
+const project = ed.toJSON();                     // save; restore with ed.loadJSON(project)</code></pre>
+</section>
+
+<section id="tools">
+  <h2>Tool reference</h2>
+  <p class="sub">Every tool, its group, and its shortcut. Pressing a group's letter again advances to the next tool in that group.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Tool</th><th>Key</th><th>Use</th></tr>
+    <tr><td>Move / select</td><td><kbd>V</kbd></td><td>Click layers, drag, transform. Drag a marquee to multi-select.</td></tr>
+    <tr><td>Hand</td><td><kbd>H</kbd></td><td>Pan the canvas.</td></tr>
+    <tr><td>Rectangular / elliptical marquee</td><td><kbd>M</kbd></td><td>Pixel selections by dragging.</td></tr>
+    <tr><td>Lasso, polygonal lasso, magnetic lasso</td><td><kbd>L</kbd></td><td>Freehand, click-to-point, or edge-snapping selections.</td></tr>
+    <tr><td>Magic wand (colour)</td><td><kbd>K</kbd></td><td>Flood-select a colour region. Tolerance defaults to 64 for photographs.</td></tr>
+    <tr><td>Magic wand (object)</td><td><kbd>A</kbd></td><td>Click an object to grab it (OpenCV). Re-click cycles overlapping objects.</td></tr>
+    <tr><td>Object select / Hover select</td><td><kbd>Q</kbd> / <kbd>X</kbd></td><td>Click-to-select an object; or preview on hover, click to commit.</td></tr>
+    <tr><td>Object / magic select (box)</td><td><kbd>W</kbd></td><td>Selects the active layer's own bounding box.</td></tr>
+    <tr><td>AI insert</td><td><kbd>N</kbd></td><td>Click a spot — or fill a selection — and describe what to draw.</td></tr>
+    <tr><td>Crop</td><td><kbd>C</kbd></td><td>Scrim, thirds guides, handles. <kbd>Enter</kbd> applies, <kbd>Esc</kbd> cancels.</td></tr>
+    <tr><td>Eyedropper</td><td><kbd>I</kbd></td><td>Sample a colour into the active brush/fill.</td></tr>
+    <tr><td>Spot heal / Clone stamp / Red-eye</td><td><kbd>J</kbd> / <kbd>S</kbd> / <kbd>R</kbd></td><td>Set a source with <kbd>⌥</kbd>-click or <kbd>⇧</kbd>-click, then paint.</td></tr>
+    <tr><td>Brush / Pencil</td><td><kbd>B</kbd></td><td>Soft/hard painting with size, softness, opacity and colour swatches.</td></tr>
+    <tr><td>Eraser</td><td><kbd>E</kbd></td><td>Erase pixels, or hide parts of a mask.</td></tr>
+    <tr><td>Paint bucket / Gradient</td><td><kbd>G</kbd></td><td>Fill similar neighbouring colours or the selection; paint linear or radial gradients.</td></tr>
+    <tr><td>Dodge / Burn / Sponge</td><td><kbd>O</kbd></td><td>Lighten, darken, or change saturation locally.</td></tr>
+    <tr><td>Pen</td><td><kbd>P</kbd></td><td>Figma-style bezier paths. See <a href="#shapes">Shapes, pen &amp; borders</a>.</td></tr>
+    <tr><td>Rectangle, ellipse, line, triangle, polygon, star</td><td><kbd>U</kbd></td><td>Vector shapes with fill, border, corner radius and shadow.</td></tr>
+    <tr><td>Type</td><td><kbd>T</kbd></td><td>Click to add editable text.</td></tr>
+  </table></div>
+  <div class="note"><b>Tip</b> Hover any rail button for its name and shortcut — the tooltip is generated from the same table the keyboard handler uses, so they can't drift apart.</div>
+</section>
+
+<section id="selection">
+  <h2>Selections</h2>
+  <p class="sub">Pixel selections limit where fills, gradients, brushes and AI edits land.</p>
+  <div class="pair">
+    <figure><img src="shots/wand.png" alt="Magic wand selection outlined with marching ants on the candle" loading="lazy"><figcaption>Magic wand: one click traces the region's real silhouette. The badge shows its size.</figcaption></figure>
+    <figure><img src="shots/magicwand.png" alt="Object magic wand outlining the candle and flame" loading="lazy"><figcaption>Object wand (OpenCV-assisted): grabs a whole object, not just a colour range.</figcaption></figure>
+  </div>
+  <ul>
+    <li><b>Modify:</b> hold <kbd>⇧</kbd> to add and <kbd>⌥</kbd> to subtract. <kbd>[</kbd> / <kbd>]</kbd> nudge the tolerance live.</li>
+    <li><b>Selection panel</b> (Properties tab): <b>Expand</b>, <b>Contract</b>, <b>Select Similar Colors</b>, <b>Recolor selection…</b>, and <b>Clip layer to selection</b> / <b>Clear clip</b>.</li>
+    <li><kbd>⌘A</kbd> selects all, <kbd>⇧⌘I</kbd> inverts, <kbd>Esc</kbd> clears.</li>
+    <li><kbd>⌘J</kbd> copies the selected pixels to a new layer; right-click offers <b>Cut to new layer</b> and <b>Delete selected pixels</b>.</li>
+    <li>Right-click a marquee and choose <b>Select object</b> to keep every object inside the box (GrabCut).</li>
+  </ul>
+</section>
+
+<section id="painting">
+  <h2>Painting &amp; retouching</h2>
+  <figure>
+    <img src="shots/brush.png" alt="Brush tool with two lime strokes and the brush options panel" loading="lazy">
+    <figcaption>Brush options: size, softness, opacity and colour swatches. Tick <b>Paint on a new layer</b> to keep strokes separate from the photo.</figcaption>
+  </figure>
+  <ul>
+    <li>Brush and pencil strokes land on their own <b>paint layer</b>, trimmed to the stroke bounds after each stroke.</li>
+    <li>Without a new layer, painting edits the image itself at its own resolution.</li>
+    <li><b>Spot heal</b> and <b>Clone stamp</b> take a source point (<kbd>⌥</kbd> or <kbd>⇧</kbd>-click); heal blends the patch into its surroundings.</li>
+    <li><b>Dodge</b>, <b>Burn</b> and <b>Sponge</b> paint exposure and saturation changes.</li>
+  </ul>
+  <h3>Gradients</h3>
+  <figure>
+    <img src="shots/gradient.png" alt="Gradient tool filling an elliptical selection from orange to purple" loading="lazy">
+    <figcaption>A linear gradient clipped by an elliptical marquee. Edit stops, add more, or switch to radial.</figcaption>
+  </figure>
+  <p>On a selected shape, the gradient handles stay live so you can re-aim: drag an end, slide the line, click a colour square to recolour (drag a middle one to move it). With nothing selected, dragging paints a gradient.</p>
+</section>
+
+<section id="shapes">
+  <h2>Shapes, pen &amp; borders</h2>
+  <figure>
+    <img src="shots/shapes.png" alt="A rectangle with a lime to violet gradient fill and a white border, plus a yellow shape" loading="lazy">
+    <figcaption>Shapes take solid or gradient fills (with angle and stops), a border, corner radius and shadow.</figcaption>
+  </figure>
+  <h3>Borders</h3>
+  <p>Colour, width, and a settings popover for <b>style</b> (solid / dashed / dotted), <b>dash &amp; gap</b>, <b>position</b> (inside / centre / outside), <b>caps</b> and <b>corner joins</b>. The eye icons beside Fill and Border hide each independently without losing the value.</p>
+  <h3>Pen tool</h3>
+  <figure>
+    <img src="shots/pen.png" alt="A bezier path with anchor points and the Edit path bar at the top" loading="lazy">
+    <figcaption>Vector edit mode: drag points and handles; the bar offers Smooth, Corner, Delete point and Done.</figcaption>
+  </figure>
+  <ul>
+    <li>Click for a corner point; click-drag for a curve. <kbd>⌥</kbd> breaks the handles, <kbd>⇧</kbd> snaps to 45°, <kbd>Space</kbd> repositions the point being placed.</li>
+    <li>Click the first point to close into a filled shape. <kbd>Enter</kbd> / <kbd>Esc</kbd> keeps an open stroke. <kbd>⌫</kbd> removes the last point; <kbd>⌘Z</kbd> steps points back while building.</li>
+    <li>With the move tool, <kbd>Enter</kbd> on a selected path opens it for point editing. Double-click to add or convert a point; <kbd>⌘</kbd>-drag bends a segment. Arrow keys nudge selected points (<kbd>⇧</kbd> = 10 px).</li>
+  </ul>
+</section>
+
+<section id="text">
+  <h2>Text &amp; ad copy</h2>
+  <figure>
+    <img src="shots/text.png" alt="Bold white title text over the photo with the typography panel on the right" loading="lazy">
+    <figcaption>Click with the Type tool (<kbd>T</kbd>), or use <b>Design → Text</b>. Double-click a text layer to edit in place.</figcaption>
+  </figure>
+  <ul>
+    <li><b>Typography:</b> font picker, size, weight (Light → Extrabold), italic, underline, strikethrough, alignment, line height and letter spacing.</li>
+    <li><b>Ad copy chips</b> in the Design tab insert ready-made <b>CTA</b>, <b>Badge</b>, <b>Price</b> and <b>Brand</b> lockups as grouped layers you can move, resize, recolour and shadow. Their copy is set when they're created, so pass your own text through <code>addCTA</code>, <code>addBadge</code>, <code>addPrice</code> or <code>addBrandLockup</code> in code. The “NEW” badge in the overview was made that way.</li>
+    <li>Auto-fit and legibility shadows keep copy readable over busy photos.</li>
+  </ul>
+</section>
+
+<section id="layers">
+  <h2>Layers, masks &amp; groups</h2>
+  <div class="pair">
+    <figure><img src="shots/layers_mask.png" alt="Layers panel with an adjustment layer, a shape, a text layer and a masked image" loading="lazy"><figcaption>Each row shows visibility, lock, thumbnail, name and type (here “Masked image”).</figcaption></figure>
+    <div>
+      <ul>
+        <li><b>Add layer</b> menu, <b>Group</b> (<kbd>⌘G</kbd> / ungroup <kbd>⇧⌘G</kbd>), <b>Adjustment layer</b>, snap-to-grid toggle, duplicate and delete live in the panel toolbar.</li>
+        <li><b>Groups</b> nest: expand or collapse them, and select members individually.</li>
+        <li><b>Stacking:</b> <kbd>]</kbd> front, <kbd>[</kbd> back, <kbd>⌘]</kbd> forward, <kbd>⌘[</kbd> backward — or drag rows.</li>
+        <li><b>Layer masks:</b> <b>Add mask</b> in the context menu. Paint white to reveal, black to hide; <b>Done editing mask</b> returns to normal. Masks can be inverted, disabled or deleted.</li>
+        <li><b>Adjustment layers</b> apply to every layer beneath them in the stack.</li>
+        <li><b>Blend modes</b> and <b>opacity</b> per layer; <b>shadow</b> with colour, blur and offset.</li>
+        <li><b>Transform:</b> rotation, X / Y, W / H, skew, flip, centre on canvas, and six align buttons.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="adjust">
+  <h2>Adjustments &amp; geometry</h2>
+  <p class="sub">Non-destructive colour and tone controls for any image layer, applied live.</p>
+  <figure>
+    <img src="shots/adjust.png" alt="Adjust panel with exposure, contrast, temperature and saturation raised, and the curves editor open" loading="lazy">
+    <figcaption>The photo above has +0.25 EV, contrast 112, temperature +22, saturation 118 and vibrance +15, with the tone-curve editor and live histogram open.</figcaption>
+  </figure>
+  <div class="cards">
+    <div class="card"><b>Light</b><span>Exposure, Brightness, Contrast, Highlights, Shadows.</span></div>
+    <div class="card"><b>Colour</b><span>Temp, Tint, Saturation, Vibrance, Hue.</span></div>
+    <div class="card"><b>Effects</b><span>Blur, and an Invert toggle.</span></div>
+    <div class="card"><b>Curves</b><span>RGB plus per-channel R / G / B curves over a luminance histogram, with presets.</span></div>
+    <div class="card"><b>Colour mixer (HSL)</b><span>Per-colour-band hue, saturation and luminance.</span></div>
+    <div class="card"><b>Geometry</b><span>Straighten, vertical and horizontal keystone, plus a four-corner perspective editor.</span></div>
+  </div>
+  <p>A dot beside <b>Curves</b> or <b>Color mixer</b> shows when it is active. <b>Reset</b> returns every control to neutral. Adjustments render before export, so the layer's pixels are never destroyed — remove the adjustment and the original is intact.</p>
+</section>
+
+<section id="stickers">
+  <h2>Stickers &amp; the Design tab</h2>
+  <div class="pair">
+    <figure><img src="shots/stickers_tab.png" alt="Stickers tab with category chips and a grid; an orange burst sticker placed on the canvas" loading="lazy"><figcaption>Stickers: click to add, or drag onto the canvas. Categories: Sale bursts, Badges &amp; tags, Ribbons &amp; banners, Price tags, Arrows, Accents.</figcaption></figure>
+    <figure><img src="shots/design_tab.png" alt="Design tab listing background actions and add element chips" loading="lazy"><figcaption>Design: background fill / extend, add text, box, circle, image or paint layer, and ad-copy lockups.</figcaption></figure>
+  </div>
+  <p>Stickers are vector shapes — recolour, resize and add borders and shadows like any other shape. In the Design tab, <b>Extend background</b> grows the image to fill the artboard, and <b>Fill with colour / image</b> sets the backdrop. Drag and drop or paste an image anywhere on the canvas to add it as a layer.</p>
+</section>
+
+<section id="context-menu">
+  <h2>Context menu &amp; search</h2>
+  <div class="pair">
+    <figure><img src="shots/context_menu.png" alt="Right-click menu with copy, paste, duplicate, arrange, flip, crop, remove background and add mask" loading="lazy"><figcaption>Right-click: clipboard, arrange, flip, align, and per-type actions such as <b>Crop image</b>, <b>Remove background</b> and <b>Add mask</b>.</figcaption></figure>
+    <figure><img src="shots/command_palette.png" alt="Command palette searching for fill" loading="lazy"><figcaption><kbd>⌘K</kbd> searches every tool and action.</figcaption></figure>
+  </div>
+  <p>The menu adapts to what is under the cursor: with a pixel selection it offers <b>Select object</b>, <b>Copy to new layer</b>, <b>Cut to new layer</b>, <b>Invert selection</b> and <b>Deselect</b>; mid-pen-path it offers <b>Finish path</b>; in vector edit mode it offers smooth / corner / delete point.</p>
+</section>
+
+<section id="ai">
+  <h2>AI Assist</h2>
+  <p class="sub">Generative editing is optional and provider-agnostic.</p>
+  <div class="pair">
+    <figure><img src="shots/ai_tab.png" alt="AI Assist tab asking for a free Gemini key, with the Convert to layers card below" loading="lazy"><figcaption>With no key set, AI Assist explains how to get a free Gemini key. Local tools keep working.</figcaption></figure>
+    <figure><img src="shots/ai_vision.png" alt="AI Vision tab showing detected subjects and the engine status" loading="lazy"><figcaption>AI Vision: detected subjects, plus which engine handles selection (<b>Local CV</b>) and generation.</figcaption></figure>
+  </div>
+  <ul>
+    <li><b>Describe change</b> — a prompt box scoped to <i>Inside selection</i> or <i>Whole canvas</i>, with style presets (Studio, Cinematic, Minimal, Warm) and an optional reference image.</li>
+    <li><b>Enhance prompt</b> rewrites a vague description into a clearer instruction.</li>
+    <li><b>Replace background</b>, <b>Remove selection</b> (erase and fill), <b>AI insert</b> and <b>AI-extend background</b> fill empty canvas around an image.</li>
+    <li>The key is stored only in your own browser. SaaS hosts should keep keys server-side and register their own provider.</li>
+  </ul>
+<pre><code>ed.ai.register({
+  async magicEdit(dataURL, instruction) { return myBackend(dataURL, instruction); }
+});
+// any subset of: magicEdit / generateImage / removeBackground / detectRegions / describe</code></pre>
+</section>
+
+<section id="convert">
+  <h2>Convert to layers</h2>
+  <p>Turn a flat image — a moodboard, an ad, a screenshot — into editable layers. <b>Auto-detect everything</b> finds objects and shows them as boxes; adjust, add or remove any, or draw one yourself with <b>Manual</b>. A review panel takes over the right side with a live preview, then <b>Create layers</b> builds a layer for each region.</p>
+  <ul>
+    <li>Photos are cut out and replaced; holes behind lifted objects are filled so nothing is doubled.</li>
+    <li>Text regions become real, font-fitted text layers.</li>
+    <li>Discarded regions are kept in a recoverable trash.</li>
+  </ul>
+</section>
+
+<section id="removebg">
+  <h2>Remove background</h2>
+  <figure>
+    <img src="shots/removebg.png" alt="The candle cut out from its background and placed over an orange to violet gradient; the layer is labelled Masked image" loading="lazy">
+    <figcaption>One click on <b>Remove BG</b>, then a gradient rectangle sent to the back. The photo layer now reads <b>Masked image</b>: its pixels are untouched, hidden by a mask.</figcaption>
+  </figure>
+  <p><b>Remove BG</b> (left card or right-click) cuts the subject out as a <b>layer mask</b>, never destroying pixels. It runs <b>offline</b> with the built-in worker pipeline; with an AI key set, the AI is used and the offline cut stays one click away.</p>
+  <figure>
+    <img src="shots/removebg_touchup.png" alt="Editing layer mask banner with Keep and Remove buttons and the cut-out candle on white; a dark patch remains beside the flame" loading="lazy">
+    <figcaption>Touch-up mode. The automatic cut left a dark patch beside the flame; paint over it with <b>Remove</b> and the cut is re-run around your stroke. <b>Done editing mask</b> exits.</figcaption>
+  </figure>
+  <ul>
+    <li>Edit the mask afterwards: paint white to reveal or black to hide.</li>
+    <li>On offline cut-outs, <b>Keep</b> / <b>Remove</b> touch-up brushes treat your strokes as hints and re-run the cut around them.</li>
+    <li><b>Auto Shadow</b> adds a soft drop shadow under the cut-out.</li>
+  </ul>
+</section>
+
+<section id="canvas">
+  <h2>Canvas &amp; zoom</h2>
+  <div class="pair">
+    <figure><img src="shots/canvas_size.png" alt="Canvas size popover with presets, width, height and aspect lock" loading="lazy"><figcaption>Canvas size: presets, custom W × H (up to 8000 px) and aspect lock.</figcaption></figure>
+    <div>
+      <ul>
+        <li>The Properties tab always shows <b>Canvas dimensions</b> with quick ratios (16:9, 1:1, 9:16, 4:5) and a <b>Background fill</b> with hex and opacity, or <b>Transparent</b>.</li>
+        <li><b>Zoom pill:</b> <kbd>−</kbd> / <kbd>+</kbd>, click the percentage to reset, <kbd>0</kbd> to fit.</li>
+        <li><b>Compare</b> opens a before/after view of the first-loaded version against your current edit.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="export">
+  <h2>Export &amp; projects</h2>
+  <div class="pair">
+    <figure><img src="shots/export_menu.png" alt="Export menu with 1x 2x 3x size, PNG, JPG, SVG, project file and open project" loading="lazy"><figcaption>Export menu with size multiplier and output dimensions.</figcaption></figure>
+    <div>
+      <div class="tablewrap"><table>
+        <tr><th>Format</th><th>Notes</th></tr>
+        <tr><td>PNG</td><td>Lossless, keeps transparency.</td></tr>
+        <tr><td>JPG</td><td>Flattened on the background colour.</td></tr>
+        <tr><td>SVG</td><td>Vector export of shapes and text.</td></tr>
+        <tr><td><code>.canvasmith</code> project</td><td>Keeps every layer, mask and adjustment. <b>Open project…</b> restores it.</td></tr>
+      </table></div>
+      <p>Choose <b>1×</b>, <b>2×</b> or <b>3×</b> to export at higher resolution. <kbd>⇧⌘C</kbd> copies the selection as a PNG to the clipboard.</p>
+    </div>
+  </div>
+</section>
+
+<section id="autosave">
+  <h2>Autosave &amp; recovery</h2>
+  <ul>
+    <li>Your document is autosaved in the browser and restored on reload. The top bar shows <i>Saved</i>.</li>
+    <li><b>New</b> is recoverable: the previous document goes to a trash you can restore from, so it never silently destroys work.</li>
+    <li>If browser storage fills up, autosave sheds the heaviest data first rather than failing.</li>
+    <li>Export a <code>.canvasmith</code> project file for backups and moving between machines.</li>
+    <li>After a restore, undo history starts clean, so one <kbd>⌘Z</kbd> never wipes the restored document.</li>
+  </ul>
+</section>
+
+<section id="troubleshooting">
+  <h2>Troubleshooting &amp; FAQ</h2>
+  <h3>The AI buttons are greyed out or say unavailable</h3>
+  <p>Generative features need a provider. Open <b>AI Assist</b> and paste a free Gemini key, or register your own provider. Selection, magic wand and <b>Remove BG</b> don't need one: they run locally.</p>
+  <h3>The first wand or object click is slow</h3>
+  <p>The OpenCV worker is loaded lazily the first time you use a computer-vision tool. A spinner shows at the cursor while it works; later clicks are quick.</p>
+  <h3>The wand selects too much (or too little) on a photo</h3>
+  <p>Use <kbd>[</kbd> and <kbd>]</kbd> to change the tolerance live, <kbd>⇧</kbd>-click to add what's missing, and <kbd>⌥</kbd>-click to subtract what leaked. For a whole object rather than a colour range, switch to the object wand (<kbd>A</kbd>).</p>
+  <h3>I can't select something inside a group</h3>
+  <p>A plain click selects the group. Double-click the item to enter the group, or click its nested row in the Layers panel. Locked layers can't be entered; unlock them first with <kbd>⇧⌘L</kbd>.</p>
+  <h3>I pressed New by mistake</h3>
+  <p>New is recoverable. The previous document goes to a trash that you can restore from. See <a href="#autosave">Autosave &amp; recovery</a>.</p>
+  <h3>My shortcut does nothing</h3>
+  <p>Shortcuts are paused while a text field, slider input or on-canvas text edit has focus. Click empty canvas (or press <kbd>Esc</kbd>) and try again.</p>
+  <h3>The exported image looks different from the canvas</h3>
+  <p>JPG has no transparency and is flattened onto white. Use PNG to keep a transparent background. Check the export size (1× / 2× / 3×) in the menu.</p>
+</section>
+
+<section id="shortcuts">
+  <h2>Keyboard shortcuts</h2>
+  <p class="sub">On Windows and Linux, use <kbd>Ctrl</kbd> in place of <kbd>⌘</kbd>.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Action</th><th>Shortcut</th></tr>
+    <tr><td>Undo / redo</td><td><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd> (or <kbd>⌘Y</kbd>)</td></tr>
+    <tr><td>Copy / cut / paste</td><td><kbd>⌘C</kbd> <kbd>⌘X</kbd> <kbd>⌘V</kbd></td></tr>
+    <tr><td>Copy as PNG</td><td><kbd>⇧⌘C</kbd></td></tr>
+    <tr><td>Duplicate</td><td><kbd>⌘D</kbd></td></tr>
+    <tr><td>Layer via copy (from selection)</td><td><kbd>⌘J</kbd></td></tr>
+    <tr><td>Group / ungroup</td><td><kbd>⌘G</kbd> / <kbd>⇧⌘G</kbd></td></tr>
+    <tr><td>Select all / invert selection</td><td><kbd>⌘A</kbd> / <kbd>⇧⌘I</kbd></td></tr>
+    <tr><td>Deselect, cancel, back out one level</td><td><kbd>Esc</kbd></td></tr>
+    <tr><td>Delete layer or selected pixels</td><td><kbd>⌫</kbd></td></tr>
+    <tr><td>Nudge selection</td><td>Arrow keys (<kbd>⇧</kbd> = 10 px)</td></tr>
+    <tr><td>Bring to front / send to back</td><td><kbd>]</kbd> / <kbd>[</kbd></td></tr>
+    <tr><td>Forward / backward</td><td><kbd>⌘]</kbd> / <kbd>⌘[</kbd></td></tr>
+    <tr><td>Flip horizontal / vertical</td><td><kbd>⇧H</kbd> / <kbd>⇧V</kbd></td></tr>
+    <tr><td>Hide / lock selection</td><td><kbd>⇧⌘H</kbd> / <kbd>⇧⌘L</kbd></td></tr>
+    <tr><td>Wand tolerance</td><td><kbd>[</kbd> / <kbd>]</kbd> while a wand or object tool is active</td></tr>
+    <tr><td>Finish polygon / magnetic lasso, pen path, crop</td><td><kbd>Enter</kbd></td></tr>
+    <tr><td>Search tools &amp; actions</td><td><kbd>⌘K</kbd></td></tr>
+    <tr><td>Zoom in / out / fit</td><td><kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd></td></tr>
+  </table></div>
+  <p>Tool letters are listed in the <a href="#tools">tool reference</a>. Shortcuts are ignored while you type in a field or edit text on the canvas.</p>
+</section>
+
+<section id="embedding">
+  <h2>Embedding &amp; API</h2>
+  <p class="sub">The same engine powers the demo, the React component and every plugin.</p>
+  <h3>React</h3>
+<pre><code>import { CanvasmithEditor } from '@canvasmith/react';
+&lt;CanvasmithEditor width={1080} height={1080} image={someURL} onExport={saveToMyApp} /&gt;</code></pre>
+  <h3>Core API highlights</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Area</th><th>Methods</th></tr>
+    <tr><td>Tools</td><td><code>setTool</code>, <code>setToolOptions</code>, <code>on</code> / <code>off</code></td></tr>
+    <tr><td>Layers</td><td><code>layers</code>, <code>addImage</code>, <code>setLayer</code>, <code>moveLayer</code>, <code>duplicateLayer</code>, <code>removeLayer</code>, <code>groupSelection</code>, <code>ungroupSelection</code>, <code>arrangeSelection</code></td></tr>
+    <tr><td>Selection</td><td><code>selectAll</code>, <code>invertSelection</code>, <code>expandSelection</code>, <code>contractSelection</code>, <code>selectSimilar</code>, <code>recolorSelection</code>, <code>clipLayerToSelection</code></td></tr>
+    <tr><td>Appearance</td><td><code>setFill</code>, <code>setShapeGradient</code>, <code>setStroke</code>, <code>setShadow</code>, <code>setTextProps</code>, <code>setImageFilters</code>, <code>setImageGeometry</code></td></tr>
+    <tr><td>Masks</td><td><code>addMask</code>, <code>enterMaskEdit</code>, <code>exitMaskEdit</code>, <code>invertMask</code>, <code>removeMask</code>, <code>removeBackground</code></td></tr>
+    <tr><td>History &amp; canvas</td><td><code>undo</code>, <code>redo</code>, <code>commit</code>, <code>resizeCanvas</code>, <code>setCanvasBackground</code></td></tr>
+    <tr><td>Output</td><td><code>exportPNG</code>, <code>exportJPEG</code>, <code>exportSVG</code>, <code>toJSON</code>, <code>loadJSON</code></td></tr>
+    <tr><td>AI</td><td><code>ai.register</code>, <code>aiEdit</code>, <code>aiBgSwap</code>, <code>aiInsert</code>, <code>aiExtendBackground</code>, <code>detectRegions</code>, <code>commitRegions</code></td></tr>
+  </table></div>
+  <p>Shared helpers such as <code>installKeybindings</code>, <code>buildContextMenu</code>, <code>installAutosave</code> and <code>ADJUST_CONTROLS</code> are exported so a custom shell gets identical behaviour to the bundled one.</p>
+</section>
+
+<section id="plugins">
+  <h2>Plugins</h2>
+  <div class="cards">
+    <div class="card"><b>Bookmarklet</b><span>“Edit in Canvasmith” from any page, including auth-gated images.</span></div>
+    <div class="card"><b>Browser extension</b><span>MV3 right-click → edit.</span></div>
+    <div class="card"><b>Claude extension</b><span>A <code>.mcpb</code> Desktop Extension that renders the editor inside the conversation as an MCP App.</span></div>
+    <div class="card"><b>Gemini CLI extension</b><span>Opens the editor in a browser tab and hands exports back to Gemini over MCP.</span></div>
+    <div class="card"><b>ChatGPT app</b><span>A remote MCP server (Streamable HTTP) that renders the editor in ChatGPT, with exports as download links.</span></div>
+    <div class="card"><b>Integrations</b><span>Per-platform recipes: Midjourney, ChatGPT, SD-WebUI, ComfyUI and more.</span></div>
+  </div>
+</section>
+
+<section id="repo">
+  <h2>Repository &amp; development</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Path</th><th>What</th></tr>
+    <tr><td><code>packages/core</code></td><td>Headless engine; only peer dependency is <code>fabric</code>.</td></tr>
+    <tr><td><code>packages/react</code></td><td>Drop-in UI and framework-free <code>mount()</code>; the standalone bundle includes React.</td></tr>
+    <tr><td><code>apps/demo</code></td><td>Vanilla-JS shell over the core.</td></tr>
+    <tr><td><code>plugins/*</code></td><td>Bookmarklet, browser, Claude, Gemini and ChatGPT integrations.</td></tr>
+    <tr><td><code>adapters/ditto</code></td><td>Reference for plugging a SaaS backend in as the AI provider.</td></tr>
+    <tr><td><code>docs</code></td><td>This page, <code>shots/</code> screenshots, and the README images.</td></tr>
+  </table></div>
+<pre><code>npm install          # dev deps
+npm test             # core unit tests (no browser needed)
+npm run test:browser # Playwright suites for the vanilla and React shells
+npm run build        # packages/react/dist/{index.js, standalone.js}
+npm run demo         # serve the repo, then open /apps/demo/ or /docs/</code></pre>
+  <h3>Regenerating the screenshots</h3>
+  <p>Every image on this page is captured from the live demo by a script, so the docs can be refreshed whenever the UI changes. With <code>npm run demo</code> running:</p>
+<pre><code>node scripts/doc-shots.mjs              # all shots → docs/shots/
+node scripts/doc-shots.mjs adjust,pen   # just these</code></pre>
+  <p>Requires Playwright and a local Chrome. MIT licensed; Fabric.js is MIT, © its contributors.</p>
+</section>
+</main>
+</div>
+
+<script>
+  // theme: follow the system until the reader picks one
+  const root = document.documentElement;
+  try { const t = localStorage.getItem('cm-docs-theme'); if (t) root.dataset.theme = t; } catch {}
+  document.getElementById('theme').onclick = () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('cm-docs-theme', root.dataset.theme); } catch {}
+  };
+  // mobile contents drawer
+  const toc = document.getElementById('toc'), menu = document.getElementById('menu-btn');
+  menu.onclick = () => { const o = toc.classList.toggle('open'); menu.setAttribute('aria-expanded', o); };
+  toc.addEventListener('click', e => { if (e.target.tagName === 'A') { toc.classList.remove('open'); menu.setAttribute('aria-expanded', false); } });
+  // highlight the section being read
+  const links = [...toc.querySelectorAll('a')], byId = id => links.find(a => a.getAttribute('href') === '#' + id);
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { links.forEach(a => a.classList.remove('on')); const a = byId(e.target.id); if (a) a.classList.add('on'); }
+  }), { rootMargin: '-72px 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach(s => io.observe(s));
+</script>
+</body>
+</html>

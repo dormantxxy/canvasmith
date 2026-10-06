@@ -5,17 +5,21 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Editor, ALL_TOOLS, PAINT_TOOLS, SEL_TOOLS, SHAPE_TOOLS, GeminiProvider, installBridge, installDropImport, installKeybindings, TOOL_KEYS,
-  selectionPolys, selectionToPath2D, FONT_GROUPS, FONT_STYLESHEET_URL, STICKER_GROUPS, STICKER_PALETTE, stickerSpec, STICKER_DEFAULT_LABEL, REGION_COLOR, REGION_NAME, relLum, hexRgb,
+  Editor, makeText, makeShape, layerTypeLabel, REGION_FILL_ALPHA, outlineRegion, ALL_TOOLS, PAINT_TOOLS, SEL_TOOLS, SHAPE_TOOLS, GeminiProvider, installBridge, installDropImport, installKeybindings, TOOL_KEYS,
+  selectionPolys, selectionToPath2D, FONT_GROUPS, FONT_STYLESHEET_URL, STICKER_GROUPS, STICKER_PALETTE, stickerSpec, STICKER_DEFAULT_LABEL, REGION_COLOR, REGION_NAME, relLum, hexRgb, rgba, splitGradientStopColor,
   startSelection, updateSelection, finalizeSelection, startPolyBuild, polyBuildAdd, polyBuildPreview, finishPolyBuild, snapToEdge, selectionBounds,
   installAutosave, restoreSession, discardToTrash, restoreDiscarded, exportProject, loadProject,
+  FX_DEFAULTS, ADJUST_CONTROLS, formatAdjustValue, GEOMETRY_DEFAULTS, GEOMETRY_CONTROLS, formatGeometryValue,
+  HSL_BANDS, HSL_PROPS, hslBandLabel, getHslValue, setHslValue, hslBandTrack,
+  CURVE_CHANNELS, normalizeCurves, compactCurves, curveHitTest, curveInsertPoint, curveMovePoint, curveRemovePoint, curveSvgPath,
+  drawPenOverlay, drawPickSpinner, mountContextMenu, strokeInfo,
 } from '@canvasmith/core';
 
 const CROP_RATIOS = [['Free', 0], ['Original', 'orig'], ['1:1', 1], ['4:5', 4 / 5], ['3:2', 3 / 2], ['16:9', 16 / 9], ['9:16', 9 / 16]];
 // Tools whose toolOpts.color/fill actually paints something on screen: PAINT_TOOLS read all four
 // brush knobs (size/hardness/opacity/color), while bucket/shapes/type only ever read color/fill
 // (their initial fill) — same split as the vanilla demo's COLOR_TOOLS/isPaint.
-const COLOR_TOOLS = [...PAINT_TOOLS, 'bucket', ...SHAPE_TOOLS, 'type'];
+const COLOR_TOOLS = [...PAINT_TOOLS, 'bucket', ...SHAPE_TOOLS, 'type', 'pen'];
 const BRUSH_SWATCHES = ['#ffffff', '#000000', '#4f8ff0', '#d76b8f', '#d4ff45', '#ef6a2d'];
 /* Standard canvas-size presets, grouped by use-case — width/height in px at a nominal
    72-96dpi-ish "design pixel" scale (matches how every web design tool treats these, not
@@ -43,121 +47,247 @@ const CANVAS_PRESETS = [
 ];
 
 // Compact SVG glyphs for the tool rail — avoids pulling in an icon-font/library dependency.
-const ICONS = {
-  select: <path d="M4 3l7 16 2-6 6-2z" />,
-  hand: <path d="M8 12V5a1.5 1.5 0 0 1 3 0v5m0-4a1.5 1.5 0 0 1 3 0v4m0-2a1.5 1.5 0 0 1 3 0v6m0-3a1.5 1.5 0 0 1 3 0v5c0 4-2 7-6 7h-2c-3 0-4-1-6-4l-2.5-4c-.6-1 .2-2.2 1.4-1.8L8 12" />,
-  crop: <path d="M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2" />,
-  brush: <path d="M9 15a3 3 0 1 0 4 4c1-1 1-2 0-3l6-6a2 2 0 0 0-3-3l-6 6c-1-1-2-1-3 0Z" />,
-  pencil: <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />,
-  eraser: <path d="M20 20H8l-5-5a2 2 0 0 1 0-3l9-9a2 2 0 0 1 3 0l6 6a2 2 0 0 1 0 3l-8 8" />,
-  clone: <path d="M8 8h11v11H8zM4 4h11v11" />,
-  heal: <path d="M12 4v6m0 4v6M4 12h6m4 0h6" />,
-  dodge: <path d="M12 3v2m0 14v2m9-9h-2M5 12H3m14.4-6.4-1.4 1.4M7 17l-1.4 1.4M17 17l1.4 1.4M7 7 5.6 5.6M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />,
-  burn: <path d="M12 2c1 4-2 4-2 7a3 3 0 0 0 6 0c0-1-.5-2-1-3 2 1 4 4 4 7a7 7 0 1 1-14 0c0-5 4-7 7-11Z" />,
-  sponge: <circle cx="12" cy="12" r="8" />,
-  redeye: <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />,
-  marquee: <rect x="3" y="5" width="18" height="14" rx="1" strokeDasharray="3 3" />,
-  'marquee-ellipse': <ellipse cx="12" cy="12" rx="9" ry="7" strokeDasharray="3 3" />,
-  lasso: <path d="M12 3c5 0 9 3 9 6 0 2.5-2.5 4.5-6 5.3.5 1 .3 2.2-.6 3a2.5 2.5 0 0 1-3.8-3.2C6 13.4 3 11.2 3 9c0-3 4-6 9-6Z" />,
-  'lasso-poly': <path d="M12 3l8 6-3 9H7L4 9z" />,
-  'lasso-mag': <path d="M6 18L16 8M14 4l1.5 1.5M19 7l1.5-1.5M18 12l2 .5M9 3l.5 2M20 17l-1.5 1.5" />,
-  wand: <path d="m15 4 1.5 3L20 8.5 16.5 10 15 13l-1.5-3L10 8.5 13.5 7Z M5 21l8-8" />,
-  spark: <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8Z" />,
-  'objectselect-bbox': <path d="m15 4 1.5 3L20 8.5 16.5 10 15 13l-1.5-3L10 8.5 13.5 7Z M5 21l8-8" />,
-  magicwand: <><path d="m15 4 1.5 3L20 8.5 16.5 10 15 13l-1.5-3L10 8.5 13.5 7Z M5 21l8-8" /><circle cx="5.5" cy="18.5" r="1" fill="currentColor" stroke="none" /></>,
-  palette: <><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.2c2.4 0 4.3-1.9 4.3-4.3C21.5 6.1 17.2 3 12 3Z" /><circle cx="7.5" cy="10.5" r="1.3" fill="currentColor" stroke="none" /><circle cx="11" cy="7" r="1.3" fill="currentColor" stroke="none" /><circle cx="15.5" cy="8" r="1.3" fill="currentColor" stroke="none" /></>,
-  objectselect: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />,
-  hoverselect: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
-  rect: <rect x="3" y="5" width="18" height="14" rx="2" />,
-  ellipse: <ellipse cx="12" cy="12" rx="9" ry="7" />,
-  line: <path d="M4 20 20 4" />,
-  triangle: <path d="M12 3 22 20H2Z" />,
-  polygon: <path d="m12 2 9 6.5-3.4 10.5H6.4L3 8.5Z" />,
-  star: <path d="m12 2 3 6.5 7 .9-5 4.9 1.2 7-6.2-3.4-6.2 3.4L7 14.3l-5-4.9 7-.9Z" />,
-  type: <path d="M5 5h14M12 5v14m-3 0h6" />,
-  bucket: <path d="m10 3 9 9-8 8a3 3 0 0 1-4 0l-5-5a3 3 0 0 1 0-4Zm-6 10 9 9M17 4l3 3" />,
-  gradient: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 4h18v16H3z" fill="url(#cm-grad-icon)" stroke="none" /></>,
-  eyedropper: <path d="m11 8-6.5 6.5a2 2 0 0 0 0 2.8l.2.2a2 2 0 0 0 2.8 0L14 11m3-7 4 4-2.5 2.5-4-4Z" />,
-  undo: <path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-1" />,
-  redo: <path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h1" />,
-  eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
-  eyeOff: <path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4.2 4.2M6.5 6.7C4 8.3 2 12 2 12s4 7 10 7c2 0 3.7-.6 5-1.4M9.9 5.1A10.6 10.6 0 0 1 12 5c6 0 10 7 10 7a15.3 15.3 0 0 1-2.2 3" />,
-  up: <path d="M18 15 12 9l-6 6" />,
-  close: <path d="M6 6l12 12M18 6 6 18" />,
-  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4" /></>,
-  moon: <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />,
-  duplicate: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M4 16V6a2 2 0 0 1 2-2h10" /></>,
-  chevron: <path d="M15 18 9 12l6-6" />,
-  tool: <path d="M4 21v-6M4 9V3M12 21v-8M12 9V3M20 21v-4M20 13V3M2 15h4M8 9h8M18 17h4" />,
-  layers: <><path d="m12 2 9 5-9 5-9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></>,
-  box: <path d="M3 8l9-5 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8" />,
-  grid: <><path d="M4 4h7v7H4z" /><path d="M13 4h7v7h-7z" /><path d="M13 13h7v7h-7z" /><path d="M4 13h7v7H4z" /></>,
-  flip: <path d="M12 3v18M7 8l-4 4 4 4M17 8l4 4-4 4" />,
-  move: <path d="M12 4v16M4 12h16M9 7l3-3 3 3M9 17l3 3 3-3M7 9l-3 3 3 3M17 9l3 3-3 3" />,
-  contrast: <><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /></>,
-  mask: <><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /></>,
-  droplet: <path d="M12 3s6 5.7 6 10a6 6 0 0 1-12 0c0-4.3 6-10 6-10z" />,
-  blurfilter: <path d="M4 5h16l-6 8v5l-4 2v-7L4 5z" />,
-  chevronD: <path d="M6 9l6 6 6-6" />,
-  expand: <path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5" />,
-  contract: <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" />,
-  similar: <><circle cx="7" cy="7" r="3" /><circle cx="17" cy="7" r="3" /><circle cx="7" cy="17" r="3" /><circle cx="17" cy="17" r="3" /></>,
-  hue: <><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" stroke="none" /></>,
-  vibrance: <><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3m10-9h-3M5 12H2m15.5-6.5-2.1 2.1M8.6 15.4l-2.1 2.1m11 0-2.1-2.1M8.6 8.6 6.5 6.5" /></>,
-  invert: <><circle cx="12" cy="12" r="9" /><path d="M12 3v18a9 9 0 0 0 0-18Z" fill="currentColor" stroke="none" /></>,
-  'align-left': <><path d="M3 2v20" /><rect x="6" y="6" width="7" height="4" rx="1" fill="currentColor" stroke="none" /><rect x="6" y="14" width="12" height="4" rx="1" fill="currentColor" stroke="none" /></>,
-  'align-h-center': <><path d="M12 2v20" /><rect x="8.5" y="6" width="7" height="4" rx="1" fill="currentColor" stroke="none" /><rect x="6" y="14" width="12" height="4" rx="1" fill="currentColor" stroke="none" /></>,
-  'align-right': <><path d="M21 2v20" /><rect x="11" y="6" width="7" height="4" rx="1" fill="currentColor" stroke="none" /><rect x="6" y="14" width="12" height="4" rx="1" fill="currentColor" stroke="none" /></>,
-  'align-top': <><path d="M2 3h20" /><rect x="6" y="6" width="4" height="7" rx="1" fill="currentColor" stroke="none" /><rect x="14" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none" /></>,
-  'align-v-center': <><path d="M2 12h20" /><rect x="6" y="8.5" width="4" height="7" rx="1" fill="currentColor" stroke="none" /><rect x="14" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none" /></>,
-  'align-bottom': <><path d="M2 21h20" /><rect x="6" y="11" width="4" height="7" rx="1" fill="currentColor" stroke="none" /><rect x="14" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none" /></>,
-  pen: <path d="M12 3l7 7-9 9-5 1 1-5 6-6 2 2M11 6l4 4" />,
-  lock: <><rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
-  minus: <path d="M5 12h14" />,
-  plus: <path d="M12 5v14M5 12h14" />,
-  maximize: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
-  search: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" /></>,
-  square: <path d="M4 4h16v16H4z" />,
-  check: <path d="M4 12l5 5L20 6" />,
-  trash: <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />,
+const ICON_PATHS = {
+  strokeSettings: 'M6 3v6M6 13v8M4 9h4v4H4zM12 3v11M12 18v3M10 14h4v4h-4zM18 3v3M18 10v11M16 6h4v4h-4z',   // vertical sliders — Border's advanced-settings toggle
+  select: 'M5 3l15 9-7 1.5L9.5 20z',                                          // cursor
+  hand: 'M8 12V6.5a1.5 1.5 0 0 1 3 0V11M11 11V5.5a1.5 1.5 0 0 1 3 0V11M14 11.5V7a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3l-2-3.5a1.5 1.5 0 0 1 2.5-1.6L8 14',
+  crop: 'M6 2v16h16M2 6h16v16',
+  brush: 'M4 20c3 1 6-1 6-4 4-2 9-8 10-12l-2-2C14 3 8 8 6 12c-3 0-5 3-2 8z',
+  pencil: 'M4 20h4L19 9l-4-4L4 16v4z',
+  eraser: 'M4 14.5L11 7.5l6 6-5 5H9zM4 20.5h16M14 4.5l5.5 5.5',
+  clone: 'M8 3h8l-1.4 6h2.4l-2 6H7l-2-6h2.4zM5 18h14v3H5z',
+  heal: 'M9 3h6a2 2 0 0 1 2 2v2h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2zM12 9v6M9 12h6',
+  dodge: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19',
+  burn: 'M12 3s5.5 5 5.5 9.5a5.5 5.5 0 0 1-11 0C6.5 10 9 8 9 8c0 2 1.5 3 1.5 3S12 8 12 3z',
+  sponge: 'M5 13h14v4a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3zM5 13c0-5 3-8 7-8s7 3 7 8M9 17v.01M13 17v.01M16 16v.01',
+  redeye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  marquee: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3',
+  'marquee-ellipse': 'ellipse:12,12,9,7',
+  lasso: 'M4 12c0-4.4 3.6-7 8-7s8 2.6 8 7-3.6 7-8 7c-1.2 0-1.8 1-1.8 2a1.8 1.8 0 0 0 2.8 1.5M5.5 17.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
+  'lasso-poly': 'M12 3l8 6-3 9H7L4 9z',                                       // ditto's "polygon" icon, reused for the polygonal lasso tool
+  /* ditto's own toolbar reuses "wand2" for both lasso-mag and wand (they're never shown side by
+     side there — one lives in a collapsed rail flyout, seen only on hover/expand). This demo's
+     flat always-expanded Select list shows both at once, so they need visually distinct glyphs:
+     lasso-mag keeps ditto's lasso loop with small perpendicular ticks along the path (edge-snap
+     cue) instead of reusing wand2 verbatim. */
+  'lasso-mag': 'M4 12c0-4.4 3.6-7 8-7s8 2.6 8 7-3.6 7-8 7c-1.2 0-1.8 1-1.8 2a1.8 1.8 0 0 0 2.8 1.5M5.5 17.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M4.5 9.5l1.6.6M18 8.5l1.7-.7M9.5 4.6l.4 1.7M15 19.8l-.6-1.7',
+  wand: 'M6 18L16 8M14 4l1.5 1.5M19 7l1.5-1.5M18 12l2 .5M9 3l.5 2M20 17l-1.5 1.5',          // ditto's wand2 (magic wand)
+  /* ditto's own toolbar reuses "wand2" for BOTH its 'wand' (object-select bbox stub, key W) and
+     its 'magicwand' (real CV click-to-grab, key A) tools too — same never-shown-side-by-side
+     reasoning as lasso/lasso-mag above. This demo's flat list needs them visually distinct:
+     objectselect-bbox keeps ditto's wand2 glyph verbatim (it's the tool ditto's own W key names
+     "Object / magic select"), magicwand gets a small sparkle added to the wand tip as the CV cue. */
+  'objectselect-bbox': 'M6 18L16 8M14 4l1.5 1.5M19 7l1.5-1.5M18 12l2 .5M9 3l.5 2M20 17l-1.5 1.5',
+  magicwand: 'M6 18L16 8M14 4l1.5 1.5M19 7l1.5-1.5M18 12l2 .5M9 3l.5 2M20 17l-1.5 1.5 M4.5 19.5l1.4 1.4M5.2 20.2h.01',
+  objectselect: 'M4 9V4h5M15 4h5v5M4 15v5h5M13 13l7 2.8-3 1.2-1.2 3z',                     // selection-box corners + pointer (the spark read as the AI icon)
+  hoverselect: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',   // ditto's eye
+  expand: 'M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5',
+  contract: 'M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5',
+  similar: 'circle:7,7,3|circle:17,7,3|circle:7,17,3|circle:17,17,3',
+  shadow: 'rect:5,4,14,14,2 M9 22h10a2 2 0 0 0 2-2V10',
+  svg: 'm8 3 4 4 4-4M12 7v10M5 21h14',
+  rect: 'M3 8l9-5 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8',                     // ditto's box
+  ellipse: 'ellipse:12,12,9,7',
+  image: 'rect:3,4,18,16,2|circle:9,10,2|M21 17l-5-5-8 8',                        // + menu's Image… (same glyph as @canvasmith/react's image icon)
+  line: 'M4 8h10M18 8h2M4 16h2M10 16h10M14 6v4M6 14v4',                       // ditto's sliders
+  triangle: 'M12 4l9 16H3z',
+  polygon: 'M12 3l8 6-3 9H7L4 9z',
+  star: 'M12 3l2.6 5.6L20 9.3l-4 4 1 6-5-2.8L7 19.3l1-6-4-4 5.4-.7L12 3z',
+  type: 'M4 7V5h12v2M10 5v14M7 19h6',
+  bucket: 'M5 11l6-6 7 7-6 6a2 2 0 0 1-3 0l-4-4a2 2 0 0 1 0-3zM19 16c1 1.5 1.5 2.5 1.5 3a1.5 1.5 0 0 1-3 0c0-.5.5-1.5 1.5-3z',
+  gradient: 'M4 4h16v16H4zM4 4l16 16',
+  eyedropper: 'M16 3a2.8 2.8 0 0 1 4 4l-8.5 8.5-4 1 1-4L16 3zM5 19l2 2',
+  up: 'M18 15 12 9l-6 6',                                                    // no chevron-up in ditto's set (only R/L/D) — kept as-is, used to move a layer up
+  close: 'M6 6l12 12M18 6L6 18',
+  undo: 'M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-1',
+  redo: 'M15 7l5 5-5 5M20 12H9a5 5 0 0 0 0 10h1',
+  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19',
+  moon: 'M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z',
+  exposure: 'rect:3,3,18,18,3|M7 8h4M9 6v4M13 16h4M5 19 19 5',               // same glyphs as @canvasmith/react's adjustment icons
+  highlights: 'circle:12,12,9|M12 7v10',
+  thermo: 'M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0zM12 10v7',
+  tint: 'M12 3s6 5.7 6 10a6 6 0 0 1-12 0c0-4.3 6-10 6-10z|M12 3v16',
+  hue: 'circle:12,12,9|M12 3a9 9 0 0 1 0 18',
+  vibrance: 'circle:12,12,4|M12 2v3M12 19v3M22 12h-3M5 12H2M17.5 6.5l-2.1 2.1M8.6 15.4l-2.1 2.1M17.5 17.5l-2.1-2.1M8.6 8.6 6.5 6.5',
+  invert: 'circle:12,12,9|M12 3v18',
+  reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+  straighten: 'M3 17 21 7|M3 12h2M8 12h2M13 12h2M18 12h3',
+  keystoneV: 'M8 4h8l4 16H4z',
+  keystoneH: 'M4 8v8l16 4V4z',
+  perspective: 'M5 6 19 4l1 16-16-2z|fillcircle:5,6,1.6|fillcircle:19,4,1.6|fillcircle:20,20,1.6|fillcircle:4,18,1.6',
+  duplicate: 'M9 9h11v11H9zM5 15H4V4h11v1',                                  // ditto's copy
+  chevron: 'M15 6l-6 6 6 6',                                                 // ditto's chevronL
+  tool: 'M4 8h10M18 8h2M4 16h2M10 16h10M14 6v4M6 14v4',                      // ditto's sliders, reused as the Tool-tab glyph
+  layerstab: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5',              // ditto's layers
+  spark: 'M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8Z',        // AI-tab glyph, matches @canvasmith/react's spark icon
+  palette: 'M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.2c2.4 0 4.3-1.9 4.3-4.3C21.5 6.1 17.2 3 12 3Z|fillcircle:7.5,10.5,1.3|fillcircle:11,7,1.3|fillcircle:15.5,8,1.3',  // Design-tab glyph
+  chevronD: 'M6 9l6 6 6-6',
+  stackfront: 'M5 4h14M12 20V9M7 13l5-5 5 5',                                // bring to front: arrow up to a bar
+  stackup: 'M12 19V6M7 11l5-5 5 5',                                           // bring forward
+  stackdown: 'M12 5v13M7 13l5 5 5-5',                                         // send backward
+  stackback: 'M5 20h14M12 4v11M7 11l5 5 5-5',                                 // send to back: arrow down to a bar                                                  // ditto's chevronD — stacking icons pair two of these, rotated
+  box: 'M3 8l9-5 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8',                     // ditto's box, for Group
+  grid: 'M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z',                // ditto's grid, for Ungroup
+  flip: 'M12 3v18M7 8l-4 4 4 4M17 8l4 4-4 4',                                // ditto's flip
+  move: 'M12 4v16M4 12h16M9 7l3-3 3 3M9 17l3 3 3-3M7 9l-3 3 3 3M17 9l3 3-3 3', // ditto's move, reused for Center H/V
+  contrast: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',                  // ditto's contrast
+  droplet: 'M12 3s6 5.7 6 10a6 6 0 0 1-12 0c0-4.3 6-10 6-10z',               // ditto's droplet, for Saturation
+  blurfilter: 'M4 5h16l-6 8v5l-4 2v-7L4 5z',                                 // ditto's filter, for Blur
+  lock: 'M6 11V8a6 6 0 0 1 12 0v3M5 11h14v9H5z',
+  unlock: 'M6 11V8a6 6 0 0 1 11.2-3M5 11h14v9H5z',
+  magnet: 'M6 4v7a6 6 0 0 0 12 0V4M6 4h4v7a2 2 0 0 0 4 0V4h4M6 8h4M14 8h4',
+  folderplus: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13h6',
+  addcircle: 'circle:12,12,9|M12 8v8M8 12h8',
+  scissors: 'circle:6,6,3|circle:6,18,3|M8.1 8.1 20 20M8.1 15.9 20 4',
+  aa: 'M4 18 8 6l4 12M5.5 14h5M14 18v-5a2.5 2.5 0 0 1 5 0v5M14 15.5h5',                            // ditto's lock, for the per-layer lock toggle
+  folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',  // Open image (header)
+  mask: 'circle:12,12,9|M12 3v18',                                          // half-tone circle: layer mask affordance (canvasmith-only, no reference counterpart)
+  'align-left': 'M3 2v20|fillrect:6,6,7,4,1|fillrect:6,14,12,4,1',
+  'align-h-center': 'M12 2v20|fillrect:8.5,6,7,4,1|fillrect:6,14,12,4,1',
+  'align-right': 'M21 2v20|fillrect:11,6,7,4,1|fillrect:6,14,12,4,1',
+  'align-top': 'M2 3h20|fillrect:6,6,4,7,1|fillrect:14,6,4,12,1',
+  'align-v-center': 'M2 12h20|fillrect:6,8.5,4,7,1|fillrect:14,6,4,12,1',
+  'align-bottom': 'M2 21h20|fillrect:6,11,4,7,1|fillrect:14,6,4,12,1',
+  minus: 'M5 12h14',
+  plus: 'M12 5v14M5 12h14',
+  maximize: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  pen: 'M12 3l7 7-9 9-5 1 1-5 6-6 2 2M11 6l4 4',
+  search: 'circle:11,11,7|M21 21l-4.35-4.35',
+  tag: 'M20.6 12.2 12.8 20a2 2 0 0 1-2.8 0l-6-6a2 2 0 0 1 0-2.8L11.8 3.4a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v5.8a2 2 0 0 1-.4 1.6z M16.5 7a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1z',
+  square: 'M4 4h16v16H4z',                                                   // "Box" select-by-hand button (ditto's box icon already reused for Group/layerstab elsewhere)
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',                              // region delete
+  check: 'M4 12l5 5L20 6',                                                  // "Finish shape"
 };
+const EYE_OPEN = 'circle:12,12,3|M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z';
+const EYE_OFF = 'M3 3l18 18M10.6 10.6a3 3 0 0 0 4.2 4.2M6.5 6.7C4 8.3 2 12 2 12s4 7 10 7c2 0 3.7-.6 5-1.4M9.9 5.1A10.6 10.6 0 0 1 12 5c6 0 10 7 10 7a15.3 15.3 0 0 1-2.2 3';
+ICON_PATHS.eyeOpen = EYE_OPEN; ICON_PATHS.eyeOff = EYE_OFF;
+// React-side names for the same glyphs (layer-row eye toggle, left-panel Layers tab)
+ICON_PATHS.eye = EYE_OPEN; ICON_PATHS.layers = ICON_PATHS.layerstab;
+
+/* Icon specs → SVG markup, ported verbatim from the vanilla demo's iconSVG() so both shells draw
+   every glyph identically (one table, one parser — no hand-redrawn JSX copies to drift). */
+function iconMarkup(spec) {
+  return spec.split('|').map(part => {
+    if (part.startsWith('fillrect:')) { const [x, y, w, h, rx] = part.slice(9).split(',').map(Number); return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="currentColor" stroke="none"/>`; }
+    if (part.startsWith('fillcircle:')) { const [cx, cy, r] = part.slice(11).split(',').map(Number); return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="currentColor" stroke="none"/>`; }
+    if (part.startsWith('rect:')) { const [x, y, w, h, rx] = part.slice(5).split(',').map(Number); return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"/>`; }
+    if (part.startsWith('circle:')) { const [cx, cy, r] = part.slice(7).split(',').map(Number); return `<circle cx="${cx}" cy="${cy}" r="${r}"/>`; }
+    if (part.startsWith('ellipse:')) { const [cx, cy, rx, ry] = part.slice(8).split(',').map(Number); return `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>`; }
+    return `<path d="${part}"/>`;
+  }).join('');
+}
+const ICON_MARKUP = {};
+
+/* "More below" cue (the demo's #left-scroll-cue / #right-scroll-cue): a fading, bobbing chevron at
+   the bottom edge of whichever .cm-scroll area inside `within` is visible and has content below the
+   fold; click scrolls it by 80%. Self-contained — scroll (capture), resize and DOM mutations drive
+   it, so no editor-event wiring is needed and it follows tab/tool switches automatically. */
+function ScrollCue({ within }) {
+  const [cue, setCue] = useState({ show: false, bottom: 0 });
+  const target = useRef(null);
+  useEffect(() => {
+    const root = within.current;
+    if (!root) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const els = [...root.querySelectorAll('.cm-scroll')].filter(el => el.clientHeight > 0);
+      const el = els.find(e => e.scrollHeight - e.scrollTop - e.clientHeight > 4) || null;
+      target.current = el;
+      const bottom = el ? Math.max(0, root.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom) : 0;
+      setCue(c => (c.show === !!el && c.bottom === bottom) ? c : { show: !!el, bottom });
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    root.addEventListener('scroll', schedule, true);
+    const ro = new ResizeObserver(schedule); ro.observe(root);
+    const mo = new MutationObserver(schedule); mo.observe(root, { childList: true, subtree: true });
+    schedule();
+    return () => { root.removeEventListener('scroll', schedule, true); ro.disconnect(); mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [within]);
+  return (
+    <div className="cm-scroll-cue" data-show={cue.show} style={{ bottom: cue.bottom }} aria-hidden="true"
+      onClick={() => { const el = target.current; if (el) el.scrollBy({ top: el.clientHeight * 0.8, behavior: 'smooth' }); }}>
+      <Icon name="chevronD" size={15} />
+    </div>
+  );
+}
+
+/* Typography font picker (demo #tx-font-btn / renderFontPop): a button showing the current face in
+   itself, opening a grouped list where every row previews its font with an "Ag" specimen. */
+function FontPicker({ value, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', off);
+    return () => document.removeEventListener('mousedown', off);
+  }, [open]);
+  let label = value || 'Choose a font…';
+  for (const g of FONT_GROUPS) { const f = g.fonts.find(([, v]) => v === value); if (f) { label = f[0]; break; } }
+  return (
+    <div className="cm-font-anchor" ref={ref}>
+      <button className="cm-btn" style={{ width: '100%', justifyContent: 'space-between' }} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <span style={{ fontFamily: value, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span><Icon name="chevronD" size={12} />
+      </button>
+      {open && (
+        <div className="cm-font-pop" role="listbox">
+          {FONT_GROUPS.map(g => (
+            <React.Fragment key={g.label}>
+              <div className="cm-font-grp-label">{g.label}</div>
+              {g.fonts.map(([l, v]) => (
+                <div key={v} className="cm-font-item" role="option" aria-selected={v === value} data-on={v === value}
+                  onClick={() => { onPick(v); setOpen(false); }}>
+                  <span className="nm" style={{ fontFamily: v }}>{l}</span><span className="ag" style={{ fontFamily: v }}>Ag</span>
+                </div>
+              ))}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Icon({ name, size = 15, style }) {
-  const glyph = ICONS[name];
-  if (!glyph) return null;
+  const spec = ICON_PATHS[name];
+  if (!spec) return null;
+  const html = ICON_MARKUP[name] || (ICON_MARKUP[name] = iconMarkup(spec));
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}>
-      {glyph}
-    </svg>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}
+      dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
 /* Renders a stickers.js shape spec (same 0-100 coordinate space addSticker() builds from) as a
    small preview SVG for the Stickers grid — one rendering path shared with the real Fabric object
    addSticker() places, so the preview always matches what clicking it actually adds. */
-function StickerShapeSVG({ spec, fill }) {
+function StickerShapeSVG({ spec, fill, strokeW = 10 }) {
   if (spec.kind === 'circle') return <circle cx={spec.cx} cy={spec.cy} r={spec.r} fill={fill} />;
   if (spec.kind === 'rect') return <rect x={spec.x} y={spec.y} width={spec.w} height={spec.h} rx={spec.rx} fill={fill} />;
   if (spec.kind === 'polygon') return <polygon points={spec.points} fill={fill} />;
-  if (spec.kind === 'path') return <path d={spec.d} fill={spec.stroke ? 'none' : fill} stroke={spec.stroke ? fill : 'none'} strokeWidth={spec.stroke ? 10 : 0} fillRule={spec.fillRule || 'nonzero'} />;
+  if (spec.kind === 'path') return <path d={spec.d} fill={spec.stroke ? 'none' : fill} stroke={spec.stroke ? fill : 'none'} strokeWidth={spec.stroke ? strokeW : 0} strokeLinecap="round" strokeLinejoin="round" fillRule={spec.fillRule || 'nonzero'} />;
   return null;
 }
-function StickerPreview({ shapeKey, size = 28 }) {
+/* `neutral`: the Stickers panel's look (demo .sticker-thumb) — one dim tone via CSS `color`, label cut
+   out in the panel background, SVG filling its cell. Without it: the real first palette colour. */
+function StickerPreview({ shapeKey, size = 28, neutral = false }) {
   const spec = stickerSpec(shapeKey);
   if (!spec) return null;
-  const fill = STICKER_PALETTE[0];
+  const fill = neutral ? 'currentColor' : STICKER_PALETTE[0];
+  const dim = neutral ? '100%' : size, sw = neutral ? 8 : 10;
   if (spec.kind === 'group') {
     const baseSpec = stickerSpec(spec.shape);
     if (!baseSpec) return null;
-    const ink = relLum(hexRgb(fill)) > 0.6 ? '#0c0c0e' : '#ffffff';
+    const ink = neutral ? 'var(--cm-bg)' : (relLum(hexRgb(fill)) > 0.6 ? '#0c0c0e' : '#ffffff');
     return (
-      <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
-        <StickerShapeSVG spec={baseSpec} fill={fill} />
+      <svg width={dim} height={dim} viewBox="0 0 100 100" aria-hidden="true">
+        <StickerShapeSVG spec={baseSpec} fill={fill} strokeW={sw} />
         <text x={50} y={50} fontFamily="system-ui, sans-serif" fontWeight={800} fontSize={STICKER_DEFAULT_LABEL.length > 4 ? 14 : 19} fill={ink} textAnchor="middle" dominantBaseline="central">{STICKER_DEFAULT_LABEL}</text>
       </svg>
     );
   }
-  return <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"><StickerShapeSVG spec={spec} fill={fill} /></svg>;
+  return <svg width={dim} height={dim} viewBox="0 0 100 100" aria-hidden="true"><StickerShapeSVG spec={spec} fill={fill} strokeW={sw} /></svg>;
 }
 
 const GROUPS = [
@@ -191,6 +321,24 @@ const TOOL_LABELS = {
   type: 'Type', eyedropper: 'Eyedropper', pen: 'Pen · vector path',
   aiinsert: 'AI insert',
 };
+// Per-tool dock hint — verbatim from the vanilla demo's TOOL_HINTS.
+const TOOL_HINTS = {
+  select: 'Click any layer directly on the artboard or drag a bounding marquee to transform.',
+  crop: 'Drag the handles, then press Enter or Apply crop. Esc cancels.',
+  'lasso-poly': 'Click to place points; click near the start (or press Enter) to close, Escape to cancel.',
+  'lasso-mag': 'Click to place points that snap to nearby edges; Enter closes, Escape cancels.',
+  wand: 'Click a colour region to select it. Shift-click adds, Alt-click subtracts.',
+  objectselect: 'Click an object to select it (OpenCV-assisted). Shift-click adds, Alt-click subtracts.',
+  hoverselect: 'Hover to preview what a click would select, then click to commit it.',
+  'objectselect-bbox': 'Click selects the active layer’s own bounding box; with nothing active, selects a center region.',
+  magicwand: 'Click an object to grab it (OpenCV-assisted). Shift-click adds, Alt-click subtracts, re-click cycles overlapping objects.',
+  gradient: 'Drag across a selected shape to fill it — the handles stay so you can re-aim it: drag an end or slide the line, click a colour square to change that colour (drag a middle one to move it); click outside the shape when done. With nothing selected, drag to paint a gradient.',
+  bucket: 'Click an area to fill it with the colour (similar neighbouring colours are filled too). With a selection, fills the selection.',
+  pen: 'Click for a corner, click-drag for a curve (⌥ breaks the handles, ⇧ snaps to 45°, Space moves the point). Click the first point to close into a filled shape; Enter/Esc keeps an open stroke. ⌫ removes the last point. With a path selected: click its outline to add a point, a point to delete it, an open end to continue.',
+  aiinsert: 'AI insert · click a spot to draw there — or make a selection first and click inside it: the AI fills exactly that shape',
+  clone: 'Alt-click (⌥) or Shift-click (⇧) to set the source point, then paint elsewhere to stamp those pixels. Click again with either to re-source.',
+  heal: 'Alt-click (⌥) or Shift-click (⇧) to set the source point, then paint over the blemish — the patch is blended into its surroundings.',
+};
 // Inverse of TOOL_KEYS (letter -> tool), so the rail's tooltip/flyout shortcut hint always
 // matches what installKeybindings actually honors — same one-source-of-truth contract as the
 // vanilla demo's own TOOL_SHORTCUT derivation.
@@ -201,6 +349,12 @@ Object.entries(TOOL_KEYS).forEach(([key, id]) => { TOOL_SHORTCUT[id] = key.toUpp
    renders as a plain button, 2+ render as a button (showing whichever sibling is active, or the
    first) plus a caret that opens a hover flyout listing the rest. Ported verbatim from the vanilla
    demo's TOOLGROUPS so both shells group/cycle tools identically. */
+const UI_FONT_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap';
+
+// Rail glyph per tool where it differs from the tool id (demo TOOLGROUPS' `icon` field).
+const TOOL_ICON = { aiinsert: 'spark' };
+// Paint tools that never read the colour option — no swatches for them.
+const NO_COLOR_TOOLS = ['eraser', 'clone', 'heal', 'dodge', 'burn', 'sponge', 'redeye'];
 const TOOLGROUPS = [
   ['select', 'hand'],
   ['marquee', 'marquee-ellipse', 'lasso', 'lasso-poly', 'lasso-mag', 'wand', 'objectselect-bbox'],
@@ -209,7 +363,8 @@ const TOOLGROUPS = [
   ['crop'],
   ['eyedropper'],
   ['heal', 'clone', 'redeye'],
-  ['brush', 'pencil', 'eraser'],
+  ['brush', 'pencil'],
+  ['eraser'],   // its own rail button — tucked in the brush flyout it was effectively undiscoverable
   ['bucket', 'gradient'],
   ['dodge', 'burn', 'sponge'],
   ['pen'],
@@ -234,14 +389,149 @@ const AI_REASON_MSG = {
 };
 
 const EMPTY_PROPS = {
-  active: false, title: 'Properties', isImage: false, isAdjustment: false, fx: { brightness: 100, contrast: 100, saturate: 100, blur: 0, hue: 0, vibrance: 0, invert: false },
+  active: false, title: 'Properties', isImage: false, isAdjustment: false, fx: FX_DEFAULTS, geom: GEOMETRY_DEFAULTS,
   text: null,
-  hasFill: false, fill: '#ef6a2d', shapeGradient: null, blend: 'source-over', opacity: 1,
-  hasBorder: false, strokeWidth: 0, stroke: '#000000',
+  hasFill: false, fill: '#ef6a2d', fillAlpha: 1, shapeGradient: null, blend: 'source-over', opacity: 1,
+  hasBorder: false, strokeWidth: 0, stroke: '#000000', strokeAlpha: 1, strokeOpts: null, shapeType: '', fillOff: false, strokeOff: false,
   angle: 0, x: '', y: '', w: '', h: '', skewX: 0, skewY: 0, isRect: false, rx: 0,
   shadow: { color: '#000000', blur: 0, offsetX: 0, offsetY: 0 },
   canGroup: false, canUngroup: false, hasSelectionPixels: false,
 };
+
+/* A solid fill/stroke value as { color: 6-digit hex, alpha: 0..1 } — plain hex, or the rgba() string
+   withAlpha writes once a fill/border opacity drops below 100%. null for gradients, patterns, etc. */
+function solidColor(c) {
+  if (typeof c !== 'string') return null;
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (m) return { color: m[1].length === 3 ? '#' + [...m[1]].map(x => x + x).join('') : c, alpha: 1 };
+  return /^rgba?\(/i.test(c) ? splitGradientStopColor(c) : null;
+}
+
+/* Inverse of solidColor — same encoding as Editor#setCanvasBackground (opaque stays a plain hex). */
+const withAlpha = (hex, alpha) => (alpha >= 1 ? hex : rgba(hex, +Math.max(0, alpha).toFixed(3)));
+
+/* A hex field beside a colour swatch — the React mirror of the demo's bindHexField: applies on
+   Enter/blur when it parses (3- or 6-digit, '#' optional), otherwise snaps back to `value`. */
+function HexField({ value, label, onCommit, className = 'cm-hex' }) {
+  const [draft, setDraft] = useState(null);
+  const shown = draft != null ? draft : (value || '').toUpperCase();
+  const commit = () => {
+    if (draft == null) return;
+    const m = draft.trim().replace(/^#/, '').match(/^([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    setDraft(null);
+    if (!m) return;
+    const h = m[1].length === 3 ? [...m[1]].map(c => c + c).join('') : m[1];
+    if ('#' + h.toLowerCase() !== (value || '').toLowerCase()) onCommit('#' + h.toLowerCase());
+  };
+  return (
+    <input className={className} aria-label={label} spellCheck={false} maxLength={7} value={shown}
+      onChange={e => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { setDraft(null); setTimeout(() => e.target.blur()); }
+      }} />
+  );
+}
+
+/* A number input that only applies on Enter/blur (artboard resizes are full history commits, so
+   not one per keystroke); Escape or an out-of-range value snaps back to `value`. */
+/* Fill / border eye toggle at the end of a colour row — hides the paint without losing it. */
+function PaintEye({ hidden, what, disabled, onToggle }) {
+  const title = (hidden ? 'Show ' : 'Hide ') + what;
+  return (
+    <button type="button" className="cm-paint-eye" title={title} aria-label={title} aria-pressed={hidden}
+      aria-disabled={disabled} onClick={() => { if (!disabled) onToggle(hidden); }}>
+      <Icon name={hidden ? 'eyeOff' : 'eye'} size={16} />
+    </button>
+  );
+}
+
+function CommitNumber({ value, min, max, onCommit, ...rest }) {
+  const [draft, setDraft] = useState(null);
+  const commit = () => {
+    if (draft == null) return;
+    setDraft(null);
+    if (String(draft).trim() === '') return;   // cleared box = revert, not 0
+    const n = Math.round(+draft);
+    if (!Number.isFinite(n)) return;
+    const v = Math.max(min, Math.min(max, n));   // out of range snaps to the limit (same as the demo)
+    if (v !== value) onCommit(v);
+  };
+  return (
+    <input type="number" min={min} max={max} {...rest} value={draft != null ? draft : value}
+      onChange={e => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') { setDraft(null); setTimeout(() => e.target.blur()); }
+      }} />
+  );
+}
+
+// AI tab style presets — same list as the demo's AI_STYLE_PRESETS; appended to the prompt on run.
+const AI_STYLE_PRESETS = [
+  ['Studio', 'clean professional studio lighting, seamless backdrop, soft natural shadows'],
+  ['Cinematic', 'cinematic lighting, dramatic contrast, rich film-like colour grade'],
+  ['Minimal', 'minimal, uncluttered composition with a soft neutral palette'],
+  ['Warm', 'warm golden-hour tones and soft sunlight'],
+];
+// Shrinks an attached AI reference image so it doesn't blow the request size.
+function downscaleDataURL(src, max = 1024) {
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }).then(img => {
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.9);
+  });
+}
+
+// [label, w, h, description] — same presets as the demo's Canvas section.
+/* Border style / position / caps / join options (stroke.js) — same lists as the vanilla demo. */
+const STROKE_STYLES = [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']];
+const STROKE_POSITIONS = [['inside', 'Inside'], ['center', 'Center'], ['outside', 'Outside']];
+const STROKE_CAPS = [['butt', 'None'], ['round', 'Round'], ['square', 'Square']];
+const STROKE_JOINS = [['miter', 'Miter'], ['round', 'Round'], ['bevel', 'Bevel']];
+
+const CANVAS_RATIOS = [['16:9', 1920, 1080, 'Standard'], ['1:1', 1080, 1080, 'Square'], ['9:16', 1080, 1920, 'Story'], ['4:5', 1080, 1350, 'Portrait']];
+
+/* Canvas section (top of Properties, always visible): artboard W×H + aspect presets, and the
+   page's background fill. Mirrors the demo's #canvas-section. */
+function CanvasSection({ editor, info }) {
+  const { W, H, bg } = info;
+  const match = CANVAS_RATIOS.find(([, w, h]) => Math.abs(W / H - w / h) < 0.005);
+  return (
+    <div className="cm-canvas-sec">
+      <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+        <span>Canvas dimensions</span><span className="aside">{match ? match[0] + ' ' + match[3] : 'Custom'}</span>
+      </div>
+      <div className="cm-cv-dims">
+        <label className="cm-cv-dim"><span>W</span><CommitNumber value={W} min={1} max={8000} aria-label="Canvas width" onCommit={w => editor().resizeCanvas(w, H)} /><span>px</span></label>
+        <label className="cm-cv-dim"><span>H</span><CommitNumber value={H} min={1} max={8000} aria-label="Canvas height" onCommit={h => editor().resizeCanvas(W, h)} /><span>px</span></label>
+      </div>
+      <div className="cm-cv-ratios">
+        {CANVAS_RATIOS.map(([label, w, h, desc]) => (
+          <button key={label} title={desc + ' — ' + w + '×' + h} data-on={!!match && match[0] === label} onClick={() => editor().resizeCanvas(w, h)}>{label}</button>
+        ))}
+      </div>
+      <div className="cm-grp">
+        <span>Background fill</span>
+        <button className="cm-cv-link" title={bg.transparent ? 'Fill the page with a solid colour again' : 'Clear the page fill (exports keep transparency as PNG)'}
+          onClick={() => editor().setCanvasBackground(bg.transparent ? { color: bg.color, alpha: 1 } : null)}>
+          {bg.transparent ? 'Make solid' : 'Transparent'}
+        </button>
+      </div>
+      <div className="cm-swatch-row">
+        <span className="cm-cv-swatch" title="Background colour">
+          <i style={{ background: bg.color, opacity: bg.alpha }} />
+          <input type="color" value={bg.color} aria-label="Background colour" onChange={e => editor().setCanvasBackground({ color: e.target.value })} />
+        </span>
+        <div className="cm-cv-fill">
+          <HexField value={bg.color} label="Background colour hex" onCommit={v => editor().setCanvasBackground({ color: v })} />
+          <span className="pct"><CommitNumber value={Math.round(bg.alpha * 100)} min={0} max={100} aria-label="Background opacity" onCommit={a => editor().setCanvasBackground({ color: bg.color, alpha: a / 100 })} />%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* Reads every field the Properties panel shows off the current fabric active object — the React
    mirror of the vanilla demo's refreshPropsPanel(), so both UIs present the exact same state.
@@ -256,24 +546,30 @@ function readProps(ed) {
   const isImage = o.type === 'image';
   const isAdjustment = o.role === 'adjustment';
   const fillTarget = o.type === 'activeSelection' ? o.getObjects()[0] : o;
-  const solidFill = !!fillTarget && typeof fillTarget.fill === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(fillTarget.fill);
+  const solidFill = fillTarget ? solidColor(fillTarget.fill) : null;
   const shapeGradient = ed.getShapeGradient();
   const hasFill = !!fillTarget && !isImage && fillTarget.type !== 'line' && fillTarget.role !== 'paint' && (solidFill || !!shapeGradient);
-  const fill = solidFill ? (fillTarget.fill.length === 4 ? '#' + [...fillTarget.fill.slice(1)].map(c => c + c).join('') : fillTarget.fill) : '#ef6a2d';
+  const fill = solidFill ? solidFill.color : '#ef6a2d';
+  const fillAlpha = solidFill ? solidFill.alpha : 1;
   // Border (stroke) applies to any fillable/strokeable vector shape or line — not images or paint
   // strokes — same hasBorder condition as the vanilla demo's refreshPropsPanel.
   const hasBorder = !!fillTarget && !isImage && fillTarget.role !== 'paint';
-  const strokeColor = fillTarget && typeof fillTarget.stroke === 'string'
-    ? (fillTarget.stroke.length === 4 ? '#' + [...fillTarget.stroke.slice(1)].map(c => c + c).join('') : fillTarget.stroke)
-    : '#000000';
+  const solidStroke = fillTarget ? solidColor(fillTarget.stroke) : null;
+  const strokeColor = solidStroke ? solidStroke.color : '#000000';
+  const strokeAlpha = solidStroke ? solidStroke.alpha : 1;
   return {
     active: true,
     title: o.type === 'activeSelection' ? (o._objects ? o._objects.length + ' layers' : 'Selection') : (ed.layers().find(l => l.active)?.name || o.type || 'Layer'),
     isImage, isAdjustment,
+    typeLabel: layerTypeLabel(o), locked: !!o.locked,
     fx: isAdjustment ? ed.getAdjustmentParams(o.id) : isImage ? ed.getImageFilters() : EMPTY_PROPS.fx,
+    geom: isImage && !isAdjustment ? ed.getImageGeometry() : EMPTY_PROPS.geom,
     text: ed.getTextProps(),
-    hasFill, fill, shapeGradient,
-    hasBorder, strokeWidth: Math.round((fillTarget && fillTarget.strokeWidth) || 0), stroke: strokeColor,
+    hasFill, fill, fillAlpha, shapeGradient,
+    // No stroke colour = no visible border, whatever Fabric's default strokeWidth of 1 says.
+    hasBorder, strokeWidth: fillTarget && fillTarget.stroke ? Math.round(fillTarget.strokeWidth || 0) : 0, stroke: strokeColor, strokeAlpha,
+    strokeOpts: hasBorder ? strokeInfo(fillTarget) : null, shapeType: fillTarget ? fillTarget.type : '',
+    fillOff: !!(fillTarget && fillTarget.fillOff), strokeOff: !!(fillTarget && fillTarget.strokeOff),
     blend: o.globalCompositeOperation || 'source-over',
     opacity: o.opacity != null ? o.opacity : 1,
     angle: Math.round(o.angle || 0),
@@ -281,7 +577,7 @@ function readProps(ed) {
     w: Math.round(o.getScaledWidth ? o.getScaledWidth() : (o.width || 0)),
     h: Math.round(o.getScaledHeight ? o.getScaledHeight() : (o.height || 0)),
     skewX: Math.round(o.skewX || 0), skewY: Math.round(o.skewY || 0),
-    isRect: o.type === 'rect', rx: Math.round(o.rx || 0),
+    isRect: o.type === 'rect', rx: Math.round(ed.cornerRadiusOf(o)),   // true on-screen radius, not the scale-divided local rx
     shadow: {
       color: (o.shadow && o.shadow.color) || '#000000',
       blur: (o.shadow && o.shadow.blur) || 0,
@@ -295,8 +591,9 @@ function readProps(ed) {
 }
 
 const THEMES = {
-  dark: { bg: '#0b0b0d', panel: '#141417', line: 'rgba(255,255,255,.07)', ink: '#f5f3ee', dim: '#aeaca4', accent: '#ef6a2d', accentInk: '#fff', stage: '#0a0a0c' },
-  light: { bg: '#f3efe7', panel: '#ffffff', line: 'rgba(30,26,18,.09)', ink: '#1c1913', dim: '#5e594f', accent: '#c85a24', accentInk: '#fff', stage: '#ece7dd' },
+  // Same palette as the vanilla demo's :root tokens — neutral graphite surfaces, blue accent.
+  dark: { bg: '#1e1e1e', panel: '#262626', line: 'rgba(255,255,255,.10)', ink: '#e8e8e6', dim: '#c3c3c0', accent: '#4f8ff0', accentInk: '#fff', stage: '#1a1a1a' },
+  light: { bg: '#ece6d9', panel: '#faf7f0', line: 'rgba(30,26,18,.11)', ink: '#26221c', dim: '#5e594f', accent: '#2f6fdb', accentInk: '#fff', stage: '#e4ddcc' },
 };
 
 const CSS = `
@@ -308,20 +605,22 @@ const CSS = `
    support controls added in this pass (checkbox rows, status pill, AI button, swatches) that need
    a secondary surface/text tone beyond the original bg/panel/ink/dim set. */
 .cm-root, .cm-root[data-cm-mode=dark]{
-  --cm-bg:#0b0b0d; --cm-panel:#141417; --cm-panel-2:#1b1b20; --cm-line:rgba(255,255,255,.07); --cm-line-soft:rgba(255,255,255,.05);
-  --cm-ink:#f5f3ee; --cm-dim:#aeaca4; --cm-dim-2:#76746d; --cm-accent:#ef6a2d; --cm-accent-ink:#fff; --cm-stage:#0a0a0c;
+  --cm-bg:#1e1e1e; --cm-panel:#262626; --cm-panel-2:#2f2f2f; --cm-line:rgba(255,255,255,.10); --cm-line-soft:rgba(255,255,255,.07);
+  --cm-ink:#e8e8e6; --cm-dim:#c3c3c0; --cm-dim-2:#918f8c; --cm-accent:#4f8ff0; --cm-accent-ink:#fff; --cm-stage:#1a1a1a; --cm-danger:#f87171; --cm-ai-green:#3ecf8e; --cm-ai-violet-ink:#c4b5fd; --cm-ai-blue:#7aa7ff; --cm-ai-violet:#b794f6; --cm-ai-teal:#5eead4;
+  --cm-shadow-sm:0 1px 0 rgba(255,255,255,.03) inset, 0 4px 12px rgba(0,0,0,.35); --cm-shadow-md:0 8px 24px rgba(0,0,0,.4);
 }
 .cm-root[data-cm-mode=light]{
   --cm-bg:#ece6d9; --cm-panel:#faf7f0; --cm-panel-2:#f1ebdd; --cm-line:rgba(30,26,18,.11); --cm-line-soft:rgba(30,26,18,.07);
-  --cm-ink:#26221c; --cm-dim:#5e594f; --cm-dim-2:#8c867a; --cm-accent:#c85a24; --cm-accent-ink:#fff; --cm-stage:#e4ddcc;
+  --cm-ink:#26221c; --cm-dim:#5e594f; --cm-dim-2:#8c867a; --cm-accent:#2f6fdb; --cm-accent-ink:#fff; --cm-stage:#e4ddcc; --cm-danger:#c73434; --cm-ai-green:#15803d; --cm-ai-violet-ink:#6d28d9; --cm-ai-blue:#2563eb; --cm-ai-violet:#7c3aed; --cm-ai-teal:#0f766e;
+  --cm-shadow-sm:0 1px 2px rgba(40,34,22,.06); --cm-shadow-md:0 8px 22px rgba(40,34,22,.08);
 }
 .cm-root{
-  display:grid;grid-template-columns:52px 220px 1fr 290px;grid-template-rows:44px 1fr;height:100%;min-height:480px;
+  display:grid;grid-template-columns:56px 290px 1fr 322px;grid-template-rows:48px 1fr;height:100%;min-height:480px;
   background:var(--cm-bg);color:var(--cm-ink);font:13px/1.45 "Hanken Grotesk",system-ui,sans-serif;position:relative}
-.cm-root[data-left-collapsed=true]{grid-template-columns:52px 0px 1fr 290px}
-.cm-root[data-side-collapsed=true]{grid-template-columns:52px 220px 1fr 0px}
-.cm-root[data-left-collapsed=true][data-side-collapsed=true]{grid-template-columns:52px 0px 1fr 0px}
-.cm-top{grid-column:1/5;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--cm-line);background:var(--cm-panel)}
+.cm-root[data-left-collapsed=true]{grid-template-columns:56px 0px 1fr 322px}
+.cm-root[data-side-collapsed=true]{grid-template-columns:56px 290px 1fr 0px}
+.cm-root[data-left-collapsed=true][data-side-collapsed=true]{grid-template-columns:56px 0px 1fr 0px}
+.cm-top{grid-column:1/5;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--cm-line);background:var(--cm-panel)}
 .cm-rail{display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 8px;border-right:1px solid var(--cm-line);background:var(--cm-panel);overflow-y:auto;overflow-x:visible;position:relative;z-index:10}
 .cm-rail-group{position:relative}
 .cm-rail-btn{all:unset;box-sizing:border-box;cursor:pointer;width:40px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;position:relative;color:var(--cm-dim);transition:background .12s}
@@ -359,33 +658,92 @@ const CSS = `
 .cm-rail-tip{position:fixed;z-index:70;background:var(--cm-ink);color:var(--cm-panel);font-size:11.5px;font-weight:600;padding:5px 9px;border-radius:6px;pointer-events:none;white-space:nowrap;transform:translateY(-50%);box-shadow:0 8px 24px rgba(0,0,0,.4)}
 .cm-rail-bottom{display:flex;flex-direction:column;align-items:center;gap:3px;margin-top:8px;padding-top:8px;border-top:1px solid var(--cm-line)}
 .cm-stage{position:relative;overflow:hidden;display:grid;place-items:center;background:var(--cm-stage)}
-.cm-left{border-right:1px solid var(--cm-line);background:var(--cm-panel);overflow-y:auto;overflow-x:hidden;padding:18px;transition:padding .15s}
-.cm-layers-block{flex:0 0 auto;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--cm-line)}
-.cm-root[data-left-collapsed=true] .cm-left{padding:0;width:0}
-.cm-side{border-left:1px solid var(--cm-line);background:var(--cm-panel);overflow-y:auto;overflow-x:hidden;padding:18px;transition:padding .15s}
-.cm-root[data-side-collapsed=true] .cm-side{padding:0;width:0}
+.cm-left{border-right:1px solid var(--cm-line);background:var(--cm-panel);overflow:hidden;padding:0;transition:padding .15s;display:flex;flex-direction:column;min-height:0}
+/* left panel: Layers / AI Vision tabs, toolbar, list, contextual tool dock, pinned AI card —
+   same structure and behaviour as the vanilla demo's #left-panel */
+.cm-lp{display:flex;flex-direction:column;flex:1;min-height:0}
+.cm-lp-tabs{display:flex;border-bottom:1px solid var(--cm-line);padding:0 10px;flex:none}
+.cm-lp-tab{all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:13px 6px 11px;font-size:12.5px;font-weight:600;color:var(--cm-dim);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.cm-lp-tab:hover{color:var(--cm-ink)}
+.cm-lp-tab[aria-selected=true]{color:var(--cm-ink);border-bottom-color:var(--cm-accent)}
+.cm-lp-tab:focus-visible{box-shadow:0 0 0 2px var(--cm-accent);border-radius:6px}
+.cm-lp-count{min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--cm-bg);color:var(--cm-dim);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+.cm-lp-view{flex:1;min-height:0;display:flex;flex-direction:column}
+.cm-lp-ai{overflow-y:auto;padding:14px}
+.cm-lp-toolbar{display:flex;align-items:center;gap:2px;padding:10px 12px 8px;flex:none;border-bottom:1px solid var(--cm-line);position:relative}
+.cm-lp-tbtn{all:unset;box-sizing:border-box;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:8px;color:var(--cm-dim);cursor:pointer}
+.cm-lp-tbtn:hover:not(:disabled){background:var(--cm-bg);color:var(--cm-ink)}
+.cm-lp-tbtn:disabled{opacity:.35;cursor:default}
+.cm-lp-tbtn:focus-visible{box-shadow:0 0 0 2px var(--cm-accent)}
+.cm-lp-tbtn[data-on=true]{color:var(--cm-accent)}
+.cm-lp-menu{position:absolute;top:42px;left:10px;width:180px;padding:5px;z-index:30;background:var(--cm-panel);border:1px solid var(--cm-line);border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.cm-lp-menu button{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;font-size:12px;color:var(--cm-ink);cursor:pointer}
+.cm-lp-menu button:hover,.cm-lp-menu button:focus-visible{background:var(--cm-bg)}
+.cm-lp-menu button svg{color:var(--cm-dim)}
+.cm-lp-list{flex:1;min-height:90px;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.cm-dock{padding-bottom:18px;margin-bottom:16px;position:relative}
+.cm-dock::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;border-radius:2px;background:var(--cm-line-soft)}
+.cm-lp-view>.cm-dock{flex:1;min-height:0;overflow-y:auto;margin:0;padding:12px 14px 14px}
+.cm-lp-view>.cm-dock::after{display:none}
+.cm-dock>div>.cm-grp:first-child{margin-top:18px;padding-top:14px;border-top:1px solid var(--cm-line-soft)}
+.cm-dock-head{display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cm-dim)}
+.cm-dock-head .cm-status-pill{margin-left:auto}
+.cm-lp-card{flex:none;position:relative;border-top:1px solid color-mix(in srgb,var(--cm-accent) 30%,var(--cm-line));padding:12px 14px 14px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--cm-accent) 10%,var(--cm-panel)),var(--cm-panel) 75%)}
+/* a bright hairline across the card's top edge so the AI area reads as its own zone */
+.cm-lp-card::before{content:"";position:absolute;left:0;right:0;top:-1px;height:1px;background:linear-gradient(90deg,transparent,var(--cm-accent),transparent)}
+.cm-lp-tab-ai svg{color:var(--cm-accent)}
+.cm-lp-card-head{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:var(--cm-ink)}
+.cm-lp-status{margin-left:auto;display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:var(--cm-bg);font-size:10.5px;font-weight:600;color:var(--cm-dim);font-family:"JetBrains Mono",ui-monospace,monospace}
+.cm-lp-status::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+.cm-lp-status[data-on=true]{color:var(--cm-accent);background:color-mix(in srgb,var(--cm-accent) 14%,transparent)}
+.cm-lp-status[data-on=true]::before{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 25%,transparent)}
+.cm-lp-card .cm-ai-detect-btn{margin-top:10px;background:var(--cm-accent);border-color:var(--cm-accent);color:var(--cm-accent-ink)}
+.cm-lp-card .cm-ai-detect-btn svg{color:var(--cm-accent-ink)}
+.cm-lp-card .cm-ai-detect-btn:hover{background:var(--cm-accent);filter:brightness(1.08)}
+.cm-lp-card .cm-ai-detect-btn[data-busy=true],.cm-lp-card-row .cm-btn[data-busy=true]{opacity:.8;pointer-events:none}
+.cm-lp-card-row{display:flex;gap:6px;margin-top:6px}
+.cm-lp-card-row .cm-btn{flex:1;justify-content:center;font-size:11.5px}
+.cm-lp-card-row .cm-btn[data-on=true]{border-color:var(--cm-accent);color:var(--cm-accent);background:color-mix(in srgb,var(--cm-accent) 10%,var(--cm-panel))}
+.cm-lp-engine{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--cm-ink);margin-top:6px}
+.cm-btn-spin{width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:cm-spin .7s linear infinite;flex:none}
+@keyframes cm-spin{to{transform:rotate(360deg)}}
+.cm-root[data-left-collapsed=true] .cm-left{padding:0;width:0;border:0}
+.cm-side{border-left:1px solid var(--cm-line);background:var(--cm-panel);overflow:hidden;padding:14px;transition:padding .15s;display:flex;flex-direction:column;min-height:0;position:relative}
+.cm-side-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;margin:0 -14px;padding:0 14px}
+.cm-left{position:relative}
+.cm-scroll-cue{position:absolute;left:0;right:8px;bottom:0;height:36px;cursor:pointer;z-index:3;
+  background:linear-gradient(to bottom,transparent,var(--cm-panel) 75%);display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;
+  opacity:0;pointer-events:none;transition:opacity .15s}
+.cm-scroll-cue[data-show=true]{opacity:1;pointer-events:auto}
+.cm-scroll-cue svg{color:var(--cm-dim-2);animation:cm-cue-bob 1.4s ease-in-out infinite}
+@keyframes cm-cue-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(3px)}}
+.cm-root[data-side-collapsed=true] .cm-side{padding:0;width:0;border:0}
 .cm-left h4, .cm-side h4{margin:8px 0 6px;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--cm-dim)}
-.cm-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px}
-.cm-tabs button{all:unset;cursor:pointer;display:flex;align-items:center;gap:6px;padding:7px 8px;border-radius:8px;font-size:12px;font-weight:600;color:var(--cm-dim);white-space:nowrap}
-.cm-tabs button:hover{background:var(--cm-bg)}
-.cm-tabs button[data-on=true]{background:var(--cm-bg);color:var(--cm-ink)}
-.cm-collapse-left{position:absolute;top:50%;left:272px;transform:translateY(-50%);width:22px;height:36px;border-radius:8px;
-  border:1px solid var(--cm-line);background:var(--cm-panel);color:var(--cm-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;transition:left .15s,border-color .12s,background .12s}
-.cm-root[data-left-collapsed=true] .cm-collapse-left{left:52px}
-.cm-collapse-left:hover{color:#fff;border-color:var(--cm-accent);background:var(--cm-accent)}
-.cm-collapse-left[data-flip=true] svg{transform:rotate(180deg)}
-.cm-collapse{position:absolute;top:50%;right:289px;transform:translateY(-50%);width:22px;height:36px;border-radius:8px;
-  border:1px solid var(--cm-line);background:var(--cm-panel);color:var(--cm-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;transition:right .15s,border-color .12s,background .12s}
+.cm-tabs{display:flex;align-items:stretch;gap:4px;margin:-14px -14px 14px;padding:0 10px;border-bottom:1px solid var(--cm-line-soft);flex:none}
+/* Text tabs on one row: accent underline on the active one, a small accent dot on AI. No "color"
+   in the transition: Chrome won't rerun it when the theme swaps custom properties. */
+.cm-tabs button{all:unset;box-sizing:border-box;flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;padding:15px 4px 12px;font-size:13px;font-weight:500;color:var(--cm-dim);white-space:nowrap;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:border-color .12s}
+.cm-tabs button:hover{color:var(--cm-ink)}
+.cm-tabs button[data-on=true]{color:var(--cm-accent);font-weight:600;border-bottom-color:var(--cm-accent)}
+.cm-tabs button:focus-visible{outline:2px solid var(--cm-accent);outline-offset:-2px;border-radius:6px}
+.cm-tabs .cm-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--cm-accent);flex:none}
+.cm-collapse-left,.cm-collapse{position:absolute;top:calc(50% + 24px);transform:translateY(-50%);width:20px;height:60px;padding:0;
+  border:1px solid var(--cm-line);background:var(--cm-panel-2);color:var(--cm-dim-2);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;
+  transition:left .18s cubic-bezier(.4,0,.2,1),right .18s cubic-bezier(.4,0,.2,1),border-color .12s,background .12s,width .12s}
+.cm-collapse-left:hover,.cm-collapse:hover{color:var(--cm-accent-ink);border-color:var(--cm-accent);background:var(--cm-accent);width:22px}
+.cm-collapse-left{left:346px;border-radius:0 8px 8px 0;border-left:none}
+.cm-root[data-left-collapsed=true] .cm-collapse-left{left:56px}
+.cm-collapse{right:322px;border-radius:8px 0 0 8px;border-right:none}
 .cm-root[data-side-collapsed=true] .cm-collapse{right:0}
-.cm-collapse:hover{color:#fff;border-color:var(--cm-accent);background:var(--cm-accent)}
-.cm-collapse[data-flip=true] svg{transform:rotate(180deg)}
+.cm-collapse-left[data-flip=true] svg,.cm-collapse[data-flip=true] svg{transform:rotate(180deg)}
 .cm-align{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0}
 .cm-align button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;height:28px;border-radius:7px;border:1px solid var(--cm-line);font-size:11px;color:var(--cm-ink)}
 .cm-align button:hover{border-color:var(--cm-accent)}
 .cm-toggle{all:unset;cursor:pointer;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--cm-line);color:var(--cm-dim)}
 .cm-toggle[data-on=true]{background:var(--cm-ink);color:var(--cm-panel);border-color:var(--cm-ink)}
 /* status pill next to a section label (e.g. "Active") — small, quiet, accent-tinted */
-.cm-status-pill{display:inline-flex;align-items:center;margin-left:auto;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--cm-accent) 16%,transparent);color:var(--cm-accent);font-size:9.5px;font-weight:700;letter-spacing:.04em}
+.cm-status-pill{display:inline-flex;align-items:center;margin-left:auto;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--cm-accent) 16%,transparent);color:var(--cm-accent);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:none}
 /* two-up checkbox row: "Snap to grid" / "Auto-detect" */
 .cm-check-row{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:10px}
 .cm-check-item{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;font-weight:500;color:var(--cm-ink)}
@@ -399,7 +757,7 @@ const CSS = `
 .cm-ai-detect-btn:active{transform:translateY(.5px)}
 .cm-ai-detect-btn svg{color:var(--cm-accent);flex-shrink:0}
 /* quick colour-preset row next to the brush colour picker */
-.cm-swatch-btn{all:unset;box-sizing:border-box;width:20px;height:20px;border-radius:50%;cursor:pointer;border:2px solid var(--cm-line);transition:transform .1s,border-color .1s}
+.cm-swatch-btn{all:unset;box-sizing:border-box;width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid var(--cm-line);transition:transform .1s,border-color .1s}
 .cm-swatch-btn:hover{transform:scale(1.1)}
 .cm-swatch-btn[data-on=true]{border-color:var(--cm-ink)}
 /* export dropdown menu (single "Export image" button in the header) */
@@ -409,22 +767,49 @@ const CSS = `
 .cm-export-menu-item:hover{background:var(--cm-bg)}
 .cm-export-caret svg{transition:transform .12s}
 .cm-export-btn[data-open=true] .cm-export-caret svg{transform:rotate(180deg)}
-.cm-layer{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;cursor:pointer;font-size:12px}
-.cm-layer:hover{background:var(--cm-bg)}.cm-layer[data-on=true]{outline:1px solid var(--cm-accent)}
-.cm-layer[data-dragover=true]{background:color-mix(in srgb,var(--cm-accent) 16%,var(--cm-panel));box-shadow:inset 0 0 0 1px dashed var(--cm-accent),inset 0 0 0 1px var(--cm-accent)}
+.cm-layer{position:relative;display:flex;align-items:center;gap:9px;padding:8px 9px 8px 6px;border-radius:10px;cursor:grab;font-size:12px;border:1px solid transparent;transition:background .1s;user-select:none}
+.cm-layer:hover{background:var(--cm-bg)}
+.cm-layer[data-on=true]{background:color-mix(in srgb,var(--cm-accent) 12%,var(--cm-bg));border-color:color-mix(in srgb,var(--cm-accent) 55%,transparent)}
+.cm-layer[data-visible=false] .cm-layer-thumb,.cm-layer[data-visible=false] .cm-layer-meta{opacity:.4}
+.cm-layer[data-dragover=true]{background:color-mix(in srgb,var(--cm-accent) 16%,var(--cm-panel));border-color:var(--cm-accent);border-style:dashed}
 .cm-layer[data-dragging=true]{opacity:.4}
-.cm-layer .cm-eye{cursor:pointer;opacity:.7;display:flex}
-.cm-layer-thumb{flex:none;width:28px;height:28px;border-radius:6px;overflow:hidden;display:grid;place-items:center;background:var(--cm-bg);border:1px solid var(--cm-line)}
-.cm-layer[data-on=true] .cm-layer-thumb{border-color:color-mix(in srgb,var(--cm-accent) 60%,var(--cm-line))}
+.cm-lr-toggles{display:flex;flex:none}
+.cm-lr-fold{all:unset;box-sizing:border-box;cursor:pointer;flex:none;width:16px;height:22px;margin:0 -5px 0 -3px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:var(--cm-dim)}
+.cm-lr-fold:hover{color:var(--cm-ink);background:var(--cm-panel)}
+.cm-lr-fold svg{transition:transform .12s}
+.cm-layer[aria-expanded=false] .cm-lr-fold svg{transform:rotate(-90deg)}
+.cm-layer-children{margin-left:16px;padding-left:4px;border-left:1px solid var(--cm-line)}
+.cm-layer[data-child=true]{padding-top:5px;padding-bottom:5px}
+.cm-layer[data-child=true] .cm-layer-thumb{width:28px;height:28px;border-radius:7px}
+.cm-layer .cm-eye{all:unset;box-sizing:border-box;cursor:pointer;width:20px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:var(--cm-dim-2)}
+.cm-layer .cm-eye:hover{color:var(--cm-ink);background:var(--cm-panel)}
+.cm-layer .cm-eye[data-active=true]{color:var(--cm-accent)}
+.cm-layer[data-on=true] .cm-eye{color:var(--cm-dim)}
+.cm-layer-thumb{flex:none;width:34px;height:34px;border-radius:8px;overflow:hidden;display:grid;place-items:center;background:var(--cm-stage);border:1px solid var(--cm-line);color:var(--cm-dim)}
 .cm-layer-thumb img{max-width:100%;max-height:100%;object-fit:contain;display:block;pointer-events:none}
-.cm-layer-thumb svg{color:var(--cm-dim)}
+.cm-layer-thumb[data-kind=text]{background:color-mix(in srgb,var(--cm-accent) 14%,var(--cm-bg));color:var(--cm-accent);font-weight:800;font-size:12px;letter-spacing:-.02em}
+.cm-layer-thumb[data-tint]{background:color-mix(in srgb,var(--tile) 18%,var(--cm-bg));border-color:color-mix(in srgb,var(--tile) 55%,var(--cm-line));color:var(--tile)}
+.cm-layer-meta{flex:1;min-width:0;line-height:1.3;display:flex;flex-direction:column}
+.cm-layer-meta .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:12.5px;color:var(--cm-ink)}
+.cm-layer-meta .sub{font-size:10.5px;color:var(--cm-dim-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.cm-layer-actions{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;gap:1px;padding:2px;border-radius:8px;background:var(--cm-bg);box-shadow:-10px 0 10px -4px var(--cm-bg);opacity:0;pointer-events:none;transition:opacity .1s}
+.cm-layer[data-on=true] .cm-layer-actions{background:color-mix(in srgb,var(--cm-accent) 12%,var(--cm-bg));box-shadow:-10px 0 10px -4px color-mix(in srgb,var(--cm-accent) 12%,var(--cm-bg))}
+.cm-layer:hover .cm-layer-actions,.cm-layer:focus-within .cm-layer-actions{opacity:1;pointer-events:auto}
+.cm-layer-actions button{all:unset;box-sizing:border-box;cursor:pointer;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:6px;color:var(--cm-dim)}
+.cm-layer-actions button:hover{background:var(--cm-panel);color:var(--cm-ink)}
+.cm-layer-actions button[data-active=true]{color:var(--cm-accent)}
 .cm-layer-rename{all:unset;box-sizing:border-box;width:100%;font-size:12px;font-weight:600;padding:2px 5px;border-radius:5px;background:var(--cm-bg);border:1px solid var(--cm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 22%,transparent);color:var(--cm-ink)}
 .cm-asset-thumb{flex:none;width:56px;cursor:pointer;text-align:center}
 .cm-asset-thumb img{width:56px;height:56px;object-fit:cover;border-radius:9px;border:1px solid var(--cm-line);display:block;transition:border-color .1s;pointer-events:none}
 .cm-asset-thumb span{display:block;font-size:10px;color:var(--cm-dim);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cm-asset-thumb:hover img{border-color:var(--cm-dim)}
-.cm-btn{all:unset;cursor:pointer;padding:8px 12px;border-radius:9px;border:1px solid var(--cm-line);font-size:13px;display:inline-flex;align-items:center;gap:7px}
-.cm-btn:hover{border-color:var(--cm-accent)}.cm-btn:disabled{opacity:.4;cursor:default}
+.cm-btn{all:unset;box-sizing:border-box;cursor:pointer;padding:8px 12px;border-radius:9px;border:1px solid var(--cm-line);font-size:13px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:7px;color:var(--cm-ink)}
+.cm-btn[data-on=true]{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent)}
+/* colour inputs everywhere: the demo's 27x26 rounded swatch, not the browser's wide default */
+.cm-root input[type=color]{width:27px;height:26px;border:none;background:none;border-radius:7px;overflow:hidden;cursor:pointer;padding:0}
+.cm-root input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.cm-root input[type=color]::-webkit-color-swatch{border:1px solid var(--cm-line);border-radius:7px}
+.cm-btn:hover{border-color:var(--cm-dim-2);background:var(--cm-panel-2)}.cm-btn[data-on=true]:hover{background:var(--cm-accent)}.cm-btn:disabled{opacity:.4;cursor:default}
 .cm-icon-btn{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:7px;border:1px solid var(--cm-line);color:var(--cm-ink)}
 .cm-icon-btn:hover{border-color:var(--cm-accent)}
 .cm-icon-btn[data-active=true]{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent)}
@@ -436,6 +821,10 @@ const CSS = `
 .cm-zoom-pill .cm-icon-btn{width:24px;height:24px;border:none;background:none}
 .cm-zoom-pct{min-width:46px;height:24px;justify-content:center;padding:0 6px;border:none;background:none;font-variant-numeric:tabular-nums}
 .cm-zoom-div{width:1px;height:16px;background:var(--cm-line)}
+/* header controls share one tighter corner radius (was 7-9px buttons and a fully round zoom pill) */
+.cm-top .cm-btn,.cm-top .cm-icon-btn,.cm-top .cm-zoom-pill{border-radius:6px}
+.cm-top .cm-zoom-pill .cm-btn,.cm-top .cm-zoom-pill .cm-icon-btn{border-radius:4px}
+.cm-export-caret{display:flex;align-items:center}
 /* Narrow headers keep only the percentage — clicking it still fits to screen, and the +/-/0
    shortcuts still work, so zoom stays reachable without crowding out Export. */
 @media (max-width:980px){
@@ -466,25 +855,125 @@ const CSS = `
 @media (max-width:640px){.cm-compare-panes{grid-template-columns:1fr;overflow-y:auto}}
 .cm-extend-banner{all:unset;position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:16;display:flex;align-items:center;gap:7px;background:var(--cm-accent);color:var(--cm-accent-ink);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.35)}
 .cm-extend-banner:hover{filter:brightness(1.06)}
+.cm-persp-bar{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:17;display:flex;align-items:center;gap:8px;background:var(--cm-panel);border:1px solid var(--cm-line);border-radius:12px;padding:8px 10px 8px 14px;font-size:12px;color:var(--cm-dim);box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:calc(100% - 32px)}
+.cm-persp-bar .cm-btn{flex:0 0 auto}
+.cm-persp-bar .cm-persp-apply{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent)}
+@media (max-width:900px){.cm-path-bar .cm-path-bar-hint{display:none}}
 .cm-ai{display:flex;gap:6px;margin-top:6px}.cm-ai input{flex:1;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:7px;color:var(--cm-ink);padding:5px 8px;font-size:12px}
 .cm-note{font-size:11px;color:var(--cm-dim);margin-top:6px;line-height:1.5}
 /* Autosave readout — quiet when things are fine, amber when the document is too big to save (or
    storage is blocked), since that's the only case the user has to act on. */
+.cm-props-title{font-family:"Bricolage Grotesque",inherit,sans-serif;font-size:15px;font-weight:600}
+.cm-side-body .cm-field input,.cm-side-body .cm-select{border-radius:6px;height:34px;padding:0 10px}
+.cm-side-body .cm-select{padding-right:34px}
+.cm-side-body .cm-row .cm-icon-btn,.cm-side-body .cm-align button{height:32px;border-radius:6px;background:var(--cm-panel-2);border-color:var(--cm-line-soft);color:var(--cm-ink)}
+.cm-side-body .cm-row .cm-icon-btn:hover,.cm-side-body .cm-align button:hover{border-color:var(--cm-dim-2)}
+.cm-side-body .cm-btn{border-radius:6px}
+.cm-side-body .cm-swatch-row{gap:10px}
+.cm-side-body .cm-swatch-row input[type=color]{width:36px;height:34px;flex:none}
+.cm-side-body .cm-swatch-row input[type=color]::-webkit-color-swatch{border-radius:6px}
+.cm-side-body .cm-swatch-row input[type=color]::-moz-color-swatch{border-radius:6px}
+.cm-side-body .cm-swatch-row>.cm-cv-fill{height:34px}
+.cm-side-body .cm-swatch-row>.cm-hex{height:34px;box-sizing:border-box;padding:0 12px;border-radius:6px;font-size:12px}
+.cm-seg{display:flex;gap:4px;padding:4px;border-radius:6px;border:1px solid var(--cm-line-soft);background:var(--cm-bg)}
+.cm-seg .cm-btn{flex:1;padding:6px 8px;border:none;border-radius:4px;background:none;color:var(--cm-dim);font-weight:500}
+.cm-seg .cm-btn:hover{background:none;color:var(--cm-ink)}
+.cm-seg .cm-btn[data-on=true],.cm-seg .cm-btn[data-on=true]:hover{background:var(--cm-accent);color:var(--cm-accent-ink);font-weight:600}
+.cm-props-footer{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 -14px -14px;padding:11px 14px;border-top:1px solid var(--cm-line);background:var(--cm-panel);font-size:11.5px;color:var(--cm-dim)}
+.cm-props-footer b{font-weight:600;color:var(--cm-ink)}
+.cm-props-footer b[data-locked=false]{color:var(--cm-ai-green)}
+.cm-props-footer b[data-locked=true]{color:#f5a524}
+.cm-font-anchor{position:relative}
+.cm-font-pop{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:60;max-height:280px;overflow-y:auto;padding:6px;background:var(--cm-panel-2);border:1px solid var(--cm-line);border-radius:12px;box-shadow:var(--cm-shadow-md)}
+.cm-font-grp-label{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cm-dim-2);padding:8px 8px 4px}
+.cm-font-grp-label:first-child{padding-top:2px}
+.cm-font-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 9px;border-radius:7px;cursor:pointer;font-size:14px;color:var(--cm-ink)}
+.cm-font-item:hover,.cm-font-item[data-on=true]{background:var(--cm-bg)}
+.cm-font-item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cm-font-item .ag{flex:none;font-size:13px;color:var(--cm-dim-2)}
+.cm-hdiv{width:1px;height:20px;background:var(--cm-line);flex:none}
+.cm-top > strong{font-family:"Bricolage Grotesque",inherit,sans-serif;font-size:14px!important;font-weight:700;letter-spacing:-.02em;flex:none}
+@media (max-width:1180px){.cm-top{gap:10px;padding:0 12px}}
 .cm-save-note{font-size:11px;color:var(--cm-dim-2);white-space:nowrap;flex:none;display:flex;align-items:center;gap:5px}
 .cm-save-note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--cm-dim-2)}
 .cm-save-note[data-warn=true]{color:#e0a02a}
 .cm-save-note[data-warn=true]::before{background:#e0a02a}
-.cm-ai-card{padding:14px;border-radius:16px;border:1px solid var(--cm-line);background:linear-gradient(160deg,color-mix(in srgb,var(--cm-accent) 16%,transparent),var(--cm-bg));margin-bottom:14px}
-.cm-ai-card-title{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;margin-bottom:8px}
-.cm-ai-card p{margin:0;font-size:11.5px;color:var(--cm-dim);line-height:1.5}
+.cm-aix-status{display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:12px;border:1px solid var(--cm-line);background:var(--cm-panel-2)}
+.cm-aix-dot{width:8px;height:8px;border-radius:50%;background:var(--cm-dim-2);flex:none}
+.cm-aix-status[data-on=true] .cm-aix-dot{background:#3ecf8e;box-shadow:0 0 0 3px color-mix(in srgb,#3ecf8e 22%,transparent)}
+.cm-aix-status b{font-size:13px;font-weight:700;color:var(--cm-ink)}
+.cm-aix-badge{padding:2px 7px;border-radius:6px;font-size:10px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--cm-ai-green);background:color-mix(in srgb,#3ecf8e 12%,transparent);border:1px solid color-mix(in srgb,#3ecf8e 35%,transparent);white-space:nowrap}
+.cm-aix-link{all:unset;margin-left:auto;display:flex;align-items:center;gap:4px;font-size:12px;color:var(--cm-dim);cursor:pointer;white-space:nowrap}
+.cm-aix-link:hover{color:var(--cm-ink)}
+.cm-aix-link svg{transform:rotate(180deg)}
+.cm-aix-keyform{margin-top:10px;font-size:11.5px;line-height:1.55;color:var(--cm-dim)}
+.cm-aix-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px 0 8px;font-size:13px;font-weight:700;color:var(--cm-ink)}
+.cm-aix-h .aside{font-size:11.5px;font-weight:500;color:var(--cm-dim)}
+.cm-aix-box{border-radius:12px;border:1px solid var(--cm-line);background:var(--cm-bg);padding:10px;transition:border-color .1s,box-shadow .1s}
+.cm-aix-box:focus-within{border-color:var(--cm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 18%,transparent)}
+.cm-aix-box textarea{all:unset;box-sizing:border-box;display:block;width:100%;min-height:72px;padding:2px 4px;font-size:12.5px;line-height:1.5;color:var(--cm-ink);white-space:pre-wrap;resize:none}
+.cm-aix-box textarea::placeholder{color:var(--cm-dim-2)}
+.cm-aix-foot{display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:10px;border-top:1px solid var(--cm-line-soft)}
+.cm-aix-pill{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--cm-line);background:var(--cm-panel-2);color:var(--cm-ink);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap}
+.cm-aix-pill:hover{border-color:var(--cm-dim-2)}
+.cm-aix-pill.enhance{margin-left:auto;color:var(--cm-ai-violet-ink);border-color:color-mix(in srgb,#8b5cf6 45%,transparent);background:color-mix(in srgb,#8b5cf6 14%,transparent)}
+.cm-aix-pill.enhance:hover{background:color-mix(in srgb,#8b5cf6 22%,transparent);border-color:color-mix(in srgb,#8b5cf6 60%,transparent)}
+.cm-aix-pill:disabled,.cm-aix-apply:disabled,.cm-aix-qa button:disabled,.cm-aix-chips button:disabled{opacity:.45;cursor:default;pointer-events:none}
+.cm-aix-ref{display:flex;align-items:center;gap:6px;min-width:0;padding:3px 4px 3px 3px;border-radius:8px;border:1px solid var(--cm-line);background:var(--cm-panel-2);font-size:11.5px;color:var(--cm-ink)}
+.cm-aix-ref img{width:22px;height:22px;border-radius:5px;object-fit:cover;flex:none}
+.cm-aix-ref button{all:unset;display:flex;padding:2px;border-radius:4px;color:var(--cm-dim);cursor:pointer}
+.cm-aix-ref button:hover{color:var(--cm-ink)}
+.cm-aix-apply{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:12px;padding:11px 12px;border-radius:12px;font-size:13px;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--cm-accent),color-mix(in srgb,var(--cm-accent) 45%,#6d28d9));box-shadow:0 6px 20px color-mix(in srgb,var(--cm-accent) 30%,transparent)}
+.cm-aix-apply:hover{filter:brightness(1.07)}
+.cm-aix-qa{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cm-aix-qa button{all:unset;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 6px 12px;border-radius:12px;border:1px solid var(--cm-line);background:var(--cm-panel-2);font-size:12px;font-weight:500;color:var(--cm-ink);cursor:pointer;text-align:center}
+.cm-aix-qa button:hover{border-color:var(--cm-dim-2)}
+.cm-aix-qa .ico{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center}
+.cm-aix-qa [data-tint=blue] .ico{color:var(--cm-ai-blue);background:color-mix(in srgb,#3b82f6 18%,transparent)}
+.cm-aix-qa [data-tint=purple] .ico{color:var(--cm-ai-violet);background:color-mix(in srgb,#8b5cf6 18%,transparent)}
+.cm-aix-qa [data-tint=teal] .ico{color:var(--cm-ai-teal);background:color-mix(in srgb,#14b8a6 18%,transparent)}
+.cm-aix-chips{display:flex;flex-wrap:wrap;gap:6px}
+.cm-aix-chips button{all:unset;box-sizing:border-box;padding:6px 12px;border-radius:999px;border:1px solid var(--cm-line);background:var(--cm-panel-2);font-size:12px;color:var(--cm-ink);cursor:pointer}
+.cm-aix-chips button:hover{border-color:var(--cm-dim-2)}
+.cm-aix-chips button[data-on=true]{border-color:var(--cm-accent);color:var(--cm-accent);background:color-mix(in srgb,var(--cm-accent) 12%,var(--cm-panel-2))}
+.cm-aix-msg{margin-top:10px;font-size:11.5px;line-height:1.5;color:var(--cm-accent)}
+.cm-aix-msg[data-err=true]{color:var(--cm-danger,#f87171)}
+.cm-aix-convert{margin-top:22px;padding:16px;border-radius:14px;border:1px solid var(--cm-line);background:var(--cm-panel-2)}
+.cm-aix-convert-head{display:flex;align-items:flex-start;gap:12px}
+.cm-aix-convert-head .ico{width:34px;height:34px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--cm-ai-violet);background:color-mix(in srgb,#8b5cf6 18%,transparent);border:1px solid color-mix(in srgb,#8b5cf6 35%,transparent);margin-top:14px}
+.cm-aix-convert-head .txt{flex:1;min-width:0}
+.cm-aix-convert-head strong{display:block;font-size:13.5px;color:var(--cm-ink)}
+.cm-aix-convert-head p{margin:4px 0 0;font-size:12px;line-height:1.5;color:var(--cm-dim)}
+.cm-aix-guided{flex:none;padding:3px 7px;border-radius:6px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:10.5px;color:var(--cm-ai-teal);border:1px solid color-mix(in srgb,#14b8a6 40%,transparent);background:color-mix(in srgb,#14b8a6 10%,transparent)}
+.cm-aix-primary,.cm-aix-secondary{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer}
+.cm-aix-primary{margin-top:16px;background:var(--cm-accent);color:var(--cm-accent-ink)}
+.cm-aix-primary:hover{filter:brightness(1.07)}
+.cm-aix-secondary{margin-top:8px;border:1px solid var(--cm-line);background:var(--cm-bg);color:var(--cm-ink);font-weight:500}
+.cm-aix-secondary:hover{border-color:var(--cm-dim-2)}
+.cm-aix-primary:disabled,.cm-aix-secondary:disabled{opacity:.5;cursor:default;pointer-events:none}
+.cm-aix-note{margin-top:14px;text-align:center;font-size:11px;line-height:1.5;color:var(--cm-dim-2)}
+.cm-ai-card{margin-top:8px;padding:14px;border-radius:16px;border:1px solid var(--cm-line);background:var(--cm-panel-2)}
+/* AI tab text inputs + key field: demo #aibox input */
+.cm-ai-input,.cm-ai-key{box-sizing:border-box;width:100%;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:12px;color:var(--cm-ink);padding:9px 12px;font:inherit;font-size:13px}
+.cm-ai-input:focus-visible,.cm-ai-key:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 45%,transparent)}
+/* sticker cells: demo .sticker-thumb — neutral glyphs in square cells */
+.cm-sticker-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.cm-sticker-thumb{all:unset;box-sizing:border-box;cursor:pointer;aspect-ratio:1;border-radius:9px;border:1px solid var(--cm-line);background:var(--cm-bg);display:flex;align-items:center;justify-content:center;padding:10px;color:var(--cm-dim);transition:border-color .1s,background .1s}
+.cm-sticker-thumb:hover{border-color:var(--cm-dim-2);background:var(--cm-panel-2)}
+.cm-sticker-thumb svg{width:100%;height:100%}
+.cm-ai-card-title{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--cm-ink)}
+.cm-ai-card p{margin:8px 0 0;font-size:12px;color:var(--cm-dim);line-height:1.55}
 .cm-ai-textarea{width:100%;box-sizing:border-box;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:12px;color:var(--cm-ink);padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical}
 .cm-btn-accent{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent)}
 .cm-btn-accent:hover{opacity:.92;border-color:var(--cm-accent)}
+.cm-key-hint{margin-left:6px;padding:1px 6px;border-radius:5px;font-size:10.5px;font-weight:600;background:color-mix(in srgb,var(--cm-accent-ink) 18%,transparent);opacity:.85}
 .cm-btn-spin{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.6px solid color-mix(in srgb,var(--cm-accent-ink) 35%,transparent);border-top-color:var(--cm-accent-ink);animation:cm-btn-spin .6s linear infinite;flex:none}
 @keyframes cm-btn-spin{to{transform:rotate(360deg)}}
 .cm-ai-suggestions{display:flex;flex-direction:column;gap:6px}
-.cm-chip{all:unset;cursor:pointer;display:flex;align-items:center;gap:7px;padding:7px 13px;border-radius:4px;border:1px solid var(--cm-line);font-size:12.5px;font-weight:500;color:var(--cm-ink)}
-.cm-chip:hover{border-color:var(--cm-accent)}
+.cm-chip{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:4px;border:1px solid var(--cm-line);font-size:11.5px;font-weight:600;color:var(--cm-ink);transition:border-color .1s,background .1s}
+.cm-chip:hover{border-color:var(--cm-dim-2);background:var(--cm-panel-2)}
+.cm-chip[data-on=true]{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent)}
+.cm-chip:focus-visible{outline:2px solid var(--cm-accent);outline-offset:1px}
 .cm-chip[data-on=true]{background:var(--cm-accent);color:var(--cm-accent-ink);border-color:var(--cm-accent);font-weight:600}
 /* Region boxes themselves are real Fabric objects rendered by <canvas> (role:'region', styled via
    REGION_COLOR inline — same as the vanilla demo) — this whole review panel is a side-panel
@@ -496,14 +985,80 @@ const CSS = `
 .cm-col{display:flex;flex-direction:column}
 .cm-dim{color:var(--cm-dim)}
 .cm-text-input{width:100%;box-sizing:border-box;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:8px;color:var(--cm-ink);padding:7px 9px;font-size:12px;font-family:inherit}
-.cm-grp{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--cm-dim);margin:16px 0 6px;padding-top:12px;border-top:1px solid var(--cm-line)}
+.cm-grp{font-family:"Bricolage Grotesque",inherit,sans-serif;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cm-dim-2);margin:18px 3px 8px;padding-top:14px;border-top:1px solid var(--cm-line-soft)}
 .cm-grp:first-child{margin-top:0;padding-top:0;border-top:none}
 .cm-field-grid{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .cm-field{flex:1;min-width:60px;display:flex;flex-direction:column;gap:5px;font-size:10.5px;color:var(--cm-dim)}
 .cm-field input{width:100%;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:7px;color:var(--cm-ink);padding:6px 8px;font-size:12px;font-family:inherit;box-sizing:border-box}
 .cm-slider-row{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--cm-dim);margin-top:6px}
 .cm-slider-row input[type=range]{flex:1;width:auto}
+.cm-slider-row .cm-val{min-width:34px;text-align:right;font-variant-numeric:tabular-nums;font-size:10.5px;color:var(--cm-ink)}
+.cm-swatch-row{display:flex;align-items:center;gap:8px}
+.cm-canvas-sec{padding-bottom:18px;margin-bottom:16px;position:relative}
+.cm-canvas-sec::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;border-radius:2px;background:var(--cm-line-soft)}
+.cm-canvas-sec .cm-grp{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cm-canvas-sec .cm-grp .aside{font-family:inherit;font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--cm-dim)}
+.cm-cv-link{all:unset;cursor:pointer;font-size:11px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--cm-accent)}
+.cm-cv-link:hover{text-decoration:underline}
+.cm-cv-dims{display:flex;gap:8px}
+.cm-cv-dim{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:0 12px;height:40px;border-radius:6px;background:var(--cm-bg);border:1px solid var(--cm-line);font-size:12px;color:var(--cm-dim);transition:border-color .1s,box-shadow .1s}
+.cm-cv-dim:hover{border-color:var(--cm-dim-2)}
+.cm-cv-dim:focus-within{border-color:var(--cm-accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--cm-accent) 22%, transparent)}
+.cm-cv-dim input{all:unset;flex:1;min-width:0;text-align:center;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px;font-weight:700;color:var(--cm-ink);-moz-appearance:textfield}
+.cm-cv-dim input::-webkit-inner-spin-button,.cm-cv-dim input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.cm-field-row{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:11.5px;color:var(--cm-dim)}
+.cm-field-row .cm-field-label{flex:0 0 36px;white-space:nowrap}
+.cm-field-row .cm-field-box{flex:1;height:34px}
+.cm-field-row .cm-field-box input{text-align:left;font-size:12px;font-weight:400}
+.cm-paint-eye,.cm-field-icon-btn{all:unset;box-sizing:border-box;flex:none;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:7px;color:var(--cm-dim);cursor:pointer;transition:color .1s,background .1s}
+.cm-paint-eye:hover,.cm-field-icon-btn:hover{color:var(--cm-ink);background:var(--cm-bg)}
+.cm-paint-eye:focus-visible,.cm-field-icon-btn:focus-visible{box-shadow:0 0 0 2px var(--cm-accent)}
+.cm-field-icon-btn[aria-expanded=true]{color:var(--cm-accent);background:color-mix(in srgb,var(--cm-accent) 12%,transparent)}
+.cm-paint-eye[aria-disabled=true]{opacity:.35;pointer-events:none}
+[data-paint-off=true]>:not(.cm-paint-eye){opacity:.45}
+.cm-stroke-seg{flex:1;padding:3px}
+.cm-stroke-seg .cm-btn{padding:5px 4px;font-size:11.5px}
+.cm-field-row .cm-stroke-gap-label{flex:0 0 auto}
+.cm-field-row+.cm-grp,.cm-field-row+div>.cm-grp:first-child{margin-top:14px}
+.cm-cv-ratios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.cm-cv-ratios button{all:unset;box-sizing:border-box;text-align:center;padding:8px 0;border-radius:6px;border:1px solid var(--cm-line);background:var(--cm-bg);color:var(--cm-dim);font-size:11.5px;font-weight:600;cursor:pointer;transition:border-color .1s,color .1s,background .1s}
+.cm-cv-ratios button:hover{color:var(--cm-ink);border-color:var(--cm-dim-2)}
+.cm-cv-ratios button[data-on=true]{color:var(--cm-accent);border-color:color-mix(in srgb, var(--cm-accent) 60%, transparent);background:color-mix(in srgb, var(--cm-accent) 12%, var(--cm-bg))}
+.cm-cv-swatch{position:relative;flex:none;width:40px;height:40px;border-radius:6px;overflow:hidden;border:1px solid var(--cm-line);background:repeating-conic-gradient(#d9d9de 0 25%, #ffffff 0 50%) 0 0/10px 10px}
+.cm-cv-swatch>i{position:absolute;inset:0}
+.cm-cv-swatch>input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.cm-cv-fill{flex:1;min-width:0;display:flex;align-items:center;height:40px;padding:0 12px;border-radius:6px;background:var(--cm-bg);border:1px solid var(--cm-line);transition:border-color .1s}
+.cm-cv-fill:focus-within{border-color:var(--cm-accent)}
+.cm-swatch-row .cm-cv-fill .cm-hex{all:unset;flex:1;min-width:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;text-transform:uppercase;color:var(--cm-ink)}
+.cm-cv-fill .pct{display:flex;align-items:center;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--cm-dim)}
+.cm-cv-fill .pct input{all:unset;width:28px;text-align:right;font-size:11px;color:var(--cm-dim);-moz-appearance:textfield}
+.cm-cv-fill .pct input:focus{color:var(--cm-ink)}
+.cm-cv-fill .pct input::-webkit-inner-spin-button,.cm-cv-fill .pct input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.cm-swatch-row .cm-hex{flex:1;min-width:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;text-transform:uppercase;padding:6px 8px;border-radius:8px;background:var(--cm-bg);border:1px solid var(--cm-line);color:var(--cm-ink)}
+.cm-swatch-row .cm-hex:focus{outline:none;border-color:var(--cm-accent)}
+.cm-adj-row{display:grid;grid-template-columns:14px 66px 1fr 36px;align-items:center;gap:8px;font-size:11.5px;color:var(--cm-dim);margin-top:6px}
+.cm-adj-row>span.lbl{cursor:default;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cm-adj-row input[type=range]{width:auto}
+.cm-adj-row .val{text-align:right;font-variant-numeric:tabular-nums;font-size:10.5px;color:var(--cm-ink)}
+.cm-adj-row .val.dim{color:var(--cm-dim)}
+.cm-curves{margin-top:8px}
+.cm-curves-tabs{display:flex;gap:4px;margin-bottom:6px}
+.cm-curves-tabs button{flex:1;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:6px;color:var(--cm-dim);font:inherit;font-size:10.5px;font-weight:700;padding:4px 0;cursor:pointer}
+.cm-curves-tabs button[data-on]{border-color:var(--cm-accent);color:var(--cm-ink)}
+.cm-curves-tabs .cm-curves-reset{flex:0 0 28px;display:flex;align-items:center;justify-content:center}
+.cm-curves-box{display:block;width:100%;aspect-ratio:1;background:var(--cm-bg);border:1px solid var(--cm-line);border-radius:8px;touch-action:none;cursor:crosshair;overflow:visible}
+.cm-curves-box .grid{stroke:var(--cm-line);stroke-width:1;fill:none}
+.cm-curves-presets{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.cm-curves-presets button{flex:1;background:none;border:1px solid var(--cm-line);border-radius:6px;color:var(--cm-dim);font:inherit;font-size:10.5px;padding:4px 6px;cursor:pointer}
+.cm-curves-presets button:hover{color:var(--cm-ink);border-color:var(--cm-dim)}
+.cm-disclose{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;padding:0;margin-top:12px;color:var(--cm-dim);font:inherit;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;opacity:.9}
+.cm-disclose .dot{width:6px;height:6px;border-radius:50%;background:var(--cm-accent)}
+.cm-subgrp{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cm-dim);margin-top:12px;opacity:.8}
 .cm-select{width:100%;background:var(--cm-bg);color:var(--cm-ink);border:1px solid var(--cm-line);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit}
+/* Own chevron instead of the native arrow (which Chrome pins ~4px from the edge whatever the
+   padding): inset 12px from the right, with room reserved so long option text never runs under it.
+   Mid-grey reads on both themes. */
+.cm-select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b93' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 12px;padding-right:34px;cursor:pointer}
 .cm-row{display:flex;gap:6px}
 .cm-row .cm-btn{flex:1;justify-content:center}
 .cm-btn:disabled, .cm-icon-btn:disabled{opacity:.4;cursor:default;pointer-events:none}
@@ -511,30 +1066,162 @@ const CSS = `
 .cm-props-empty svg{color:var(--cm-line);margin-bottom:4px}
 .cm-props-empty .h{font-size:12.5px;font-weight:700;color:var(--cm-ink)}
 .cm-props-empty .d{font-size:11.5px;line-height:1.6;max-width:190px;color:var(--cm-dim)}
-input[type=range]{width:110px;min-width:0;-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}
-input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:999px;background:var(--cm-line)}
-input[type=range]::-moz-range-track{height:5px;border-radius:999px;background:var(--cm-line)}
-input[type=range]::-moz-range-progress{height:5px;border-radius:999px;background:var(--cm-accent)}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;margin-top:-5px;border-radius:50%;background:var(--cm-ink);border:3px solid var(--cm-accent);transition:transform .1s}
-input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--cm-ink);border:3px solid var(--cm-accent);transition:transform .1s}
-input[type=range]:hover::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb{transform:scale(1.12)}
-input[type=range]:hover::-moz-range-thumb, input[type=range]:active::-moz-range-thumb{transform:scale(1.12)}
+/* slider: thin neutral track (no progress fill), accent thumb with a white ring + soft glow; a slider
+   can swap its track for a colour ramp via --cm-track (white balance, HSL bands) — same as the demo */
+input[type=range]{width:110px;min-width:0;height:22px;-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:var(--cm-track, var(--cm-line))}
+input[type=range]::-moz-range-track{height:6px;border-radius:999px;background:var(--cm-track, var(--cm-line))}
+input[type=range]::-moz-range-progress{background:transparent}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:var(--cm-accent);border:3px solid #fff;box-sizing:border-box;box-shadow:0 0 0 4px color-mix(in srgb,var(--cm-accent) 22%,transparent),0 2px 6px rgba(0,0,0,.35);transition:transform .1s,box-shadow .1s}
+input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--cm-accent);border:3px solid #fff;box-sizing:border-box;box-shadow:0 0 0 4px color-mix(in srgb,var(--cm-accent) 22%,transparent),0 2px 6px rgba(0,0,0,.35);transition:transform .1s,box-shadow .1s}
+input[type=range]:hover::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb{transform:scale(1.1)}
+input[type=range]:hover::-moz-range-thumb, input[type=range]:active::-moz-range-thumb{transform:scale(1.1)}
 input[type=range]:focus-visible{outline:none}
-input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 35%,transparent)}
-input[type=range]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 35%,transparent)}
-input[type=range]:disabled{accent-color:var(--cm-dim)}
-input[type=range]:disabled::-webkit-slider-thumb{background:var(--cm-dim);border-color:var(--cm-line)}
-input[type=range]:disabled::-moz-range-thumb{background:var(--cm-dim);border-color:var(--cm-line)}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 5px color-mix(in srgb,var(--cm-accent) 40%,transparent),0 2px 6px rgba(0,0,0,.35)}
+input[type=range]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 5px color-mix(in srgb,var(--cm-accent) 40%,transparent),0 2px 6px rgba(0,0,0,.35)}
+input[type=range]:disabled{cursor:default;opacity:.55}
+input[type=range]:disabled::-webkit-slider-thumb{background:var(--cm-dim);box-shadow:none;transform:none}
+input[type=range]:disabled::-moz-range-thumb{background:var(--cm-dim);box-shadow:none;transform:none}
+/* Sliders + Adjust section, matched to the design mockup: a small solid thumb (no white ring/halo)
+   on a thin track, tighter rows, mono readouts, quiet group labels, a custom Invert checkbox and a
+   filled Reset button. Overrides the base slider rules above (same specificity, later wins). */
+input[type=range]{height:18px}
+input[type=range]::-webkit-slider-runnable-track{height:4px}
+input[type=range]::-moz-range-track{height:4px}
+input[type=range]::-webkit-slider-thumb{width:14px;height:14px;margin-top:-5px;border:none;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border:none;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color-mix(in srgb,var(--cm-accent) 35%,transparent)}
+input[type=range]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 4px color-mix(in srgb,var(--cm-accent) 35%,transparent)}
+.cm-adj-row{grid-template-columns:16px 76px 1fr 40px;gap:10px;min-height:27px;margin-top:0;font-size:12.5px;color:var(--cm-ink)}
+.cm-adj-row svg{color:var(--cm-dim)}
+.cm-adj-row .val{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--cm-ink)}
+.cm-adj-row .val.dim{color:var(--cm-ink);opacity:.85}
+.cm-subgrp{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--cm-dim-2);opacity:1;margin:14px 0 4px}
+.cm-disclose{margin-top:14px;color:var(--cm-ink);font-size:11px;letter-spacing:.06em;gap:10px}
+.cm-disclose svg{color:var(--cm-dim)}
+.cm-adj-check-row{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:12.5px;color:var(--cm-ink);cursor:pointer}
+.cm-adj-check-row svg{color:var(--cm-dim)}
+.cm-adj-check{-webkit-appearance:none;appearance:none;margin:0 0 0 auto;width:16px;height:16px;border-radius:4px;border:1px solid var(--cm-line);background:var(--cm-bg);cursor:pointer;display:grid;place-content:center;flex:none}
+.cm-adj-check:checked{background:var(--cm-accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5'/%3E%3C/svg%3E") center/12px no-repeat;border-color:var(--cm-accent)}
+.cm-adj-check:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--cm-accent) 35%,transparent)}
+.cm-btn.cm-adj-reset{margin-top:12px;width:100%;justify-content:center;padding:10px 12px;border-radius:6px;border-color:transparent;background:var(--cm-panel-2);font-weight:500}
+.cm-btn.cm-adj-reset:hover{border-color:var(--cm-line);background:var(--cm-panel-2)}
 `;
+
+/* Tone-curve editor: channel tabs, histogram backdrop, click to add a point, drag to move, double-
+   click (or drag it out of the box) to delete. All point rules live in core (tone.js's curve*
+   helpers) — this only maps pointer coords into curve space and draws. Same behaviour as the
+   vanilla demo's curves editor. onChange(curves, live) fires per move with live=true; onCommit()
+   fires once on release so one drag is one undo step. */
+const CURVE_COLORS = { rgb: 'var(--cm-ink)', r: '#e5484d', g: '#30a46c', b: '#3e63dd' };
+const CURVE_LABELS = { rgb: 'RGB', r: 'R', g: 'G', b: 'B' };
+const CURVE_PRESETS = [
+  ['Linear', null],
+  ['Contrast', { rgb: [[0, 0], [64, 48], [192, 208], [255, 255]] }],
+  ['Fade', { rgb: [[0, 36], [128, 132], [255, 236]] }],
+  ['Brighten', { rgb: [[0, 0], [110, 150], [255, 255]] }],
+];
+function CurvesEditor({ curves, histogram, onChange, onCommit }) {
+  const [ch, setCh] = useState('rgb');
+  const svgRef = useRef(null), drag = useRef(null);
+  const all = normalizeCurves(curves), pts = all[ch];
+  const toCurve = (e) => {
+    const r = svgRef.current.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * 255, y: 255 - (e.clientY - r.top) / r.height * 255, tol: 10 * 255 / r.width };
+  };
+  const emit = (next, live) => onChange(compactCurves({ ...all, [ch]: next }), live);
+  const down = (e) => {
+    const { x, y, tol } = toCurve(e);
+    let index = curveHitTest(pts, x, y, tol), base = pts;
+    if (index < 0) {
+      const ins = curveInsertPoint(pts, x, y);
+      if (ins.index < 0) return;
+      index = ins.index; base = ins.points; emit(base, true);
+    }
+    drag.current = { index, base };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const move = (e) => {
+    const d = drag.current; if (!d) return;
+    const { x, y } = toCurve(e);
+    const interior = d.index > 0 && d.index < d.base.length - 1;
+    emit(interior && (y < -24 || y > 279) ? curveRemovePoint(d.base, d.index) : curveMovePoint(d.base, d.index, x, y), true);
+  };
+  const up = () => { if (drag.current) { drag.current = null; onCommit(); } };
+  const dbl = (e) => {
+    const { x, y, tol } = toCurve(e);
+    const i = curveHitTest(pts, x, y, tol);
+    if (i > 0 && i < pts.length - 1) { emit(curveRemovePoint(pts, i), true); onCommit(); }
+  };
+  const histPath = histogram ? 'M0 256' + Array.from(histogram, (v, i) => `L${i} ${256 - v * 240}`).join('') + 'L255 256Z' : null;
+  return (
+    <div className="cm-curves">
+      <div className="cm-curves-tabs" role="tablist">
+        {CURVE_CHANNELS.map(c => (
+          <button key={c} role="tab" aria-selected={ch === c} data-on={ch === c ? '1' : undefined} onClick={() => setCh(c)}
+            style={{ color: c === 'rgb' ? undefined : CURVE_COLORS[c] }}>{CURVE_LABELS[c]}</button>
+        ))}
+        <button className="cm-curves-reset" title={'Reset ' + CURVE_LABELS[ch] + ' curve'} onClick={() => { emit([[0, 0], [255, 255]], true); onCommit(); }}><Icon name="reset" size={12} /></button>
+      </div>
+      <svg ref={svgRef} viewBox="0 0 256 256" className="cm-curves-box" aria-label={CURVE_LABELS[ch] + ' tone curve'}
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onDoubleClick={dbl}>
+        {histPath && <path d={histPath} fill="var(--cm-dim)" opacity=".22" />}
+        {[64, 128, 192].map(v => <React.Fragment key={v}><path d={`M${v} 0V256`} className="grid" /><path d={`M0 ${v}H256`} className="grid" /></React.Fragment>)}
+        <path d="M0 256L256 0" className="grid" strokeDasharray="3 4" />
+        {CURVE_CHANNELS.filter(c => c !== ch && curves && curves[c]).map(c => <path key={c} d={curveSvgPath(all[c], 256)} fill="none" stroke={CURVE_COLORS[c]} strokeWidth="1" opacity=".45" />)}
+        <path d={curveSvgPath(pts, 256)} fill="none" stroke={CURVE_COLORS[ch]} strokeWidth="2" />
+        {pts.map(([x, y], i) => <circle key={i} cx={x * 256 / 255} cy={256 - y * 256 / 255} r="5" fill="var(--cm-panel)" stroke={CURVE_COLORS[ch]} strokeWidth="2" />)}
+      </svg>
+      <div className="cm-curves-presets">
+        {CURVE_PRESETS.map(([label, preset]) => <button key={label} onClick={() => { onChange(preset, true); onCommit(); }}>{label}</button>)}
+      </div>
+    </div>
+  );
+}
+
+/* Per-band HSL mixer (Lightroom's layout): pick Hue / Saturation / Luminance, then one slider per
+   colour band, each track previewing its own effect. Values and the stored shape are core's
+   (tone.js setHslValue/hslBandTrack) — same as the vanilla demo's mixer. */
+function HslMixer({ hsl, onChange, onCommit }) {
+  const [prop, setProp] = useState('s');
+  return (
+    <div className="cm-curves">
+      <div className="cm-curves-tabs" role="tablist">
+        {HSL_PROPS.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={prop === k} data-on={prop === k ? '1' : undefined} onClick={() => setProp(k)}>{label}</button>
+        ))}
+        <button className="cm-curves-reset" title="Reset colour mixer" onClick={() => { onChange(null, true); onCommit(); }}><Icon name="reset" size={12} /></button>
+      </div>
+      {HSL_BANDS.map(([band, deg]) => {
+        const v = getHslValue(hsl, band, prop), label = hslBandLabel(band);
+        return (
+          <div key={band} className="cm-adj-row" title={label + ' — double-click to reset'} onDoubleClick={() => { onChange(setHslValue(hsl, band, prop, 0), true); onCommit(); }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: `hsl(${deg} 75% 52%)`, justifySelf: 'center' }} />
+            <span className="lbl">{label}</span>
+            <input type="range" aria-label={label + ' ' + prop} min="-100" max="100" step="1" value={v}
+              style={{ '--cm-track': hslBandTrack(band, prop) }}
+              onChange={e => onChange(setHslValue(hsl, band, prop, +e.target.value), true)} onPointerUp={onCommit} onKeyUp={onCommit} />
+            <span className={'val' + (v ? '' : ' dim')}>{(v > 0 ? '+' : '') + v}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = null, ai = 'gemini', theme = {}, mode, bridge = true, autosave = true, openCvUrl, onReady, onExport }) {
   const canvasRef = useRef(null);
   const stageRef = useRef(null);
   const rootRef = useRef(null);
+  const leftRef = useRef(null);
+  const sideRef = useRef(null);
   const edRef = useRef(null);
   const [tool, setTool] = useState('select');
-  const [opts, setOpts] = useState({ size: 30, opacity: 1, hardness: 0.7, color: '#ef6a2d', tolerance: 32, addMode: false, gradientType: 'linear', gradientStops: [{ offset: 0, color: '#ef6a2d' }, { offset: 1, color: '#7c3aed' }], cropRatio: 0, paintNewLayer: false });
+  const [opts, setOpts] = useState({ size: 30, opacity: 1, hardness: 0.7, color: '#000000', tolerance: 32, addMode: false, gradientType: 'linear', gradientStops: [{ offset: 0, color: '#ef6a2d' }, { offset: 1, color: '#7c3aed' }], cropRatio: 0, paintNewLayer: false });
   const [layers, setLayers] = useState([]);
+  const [canvasInfo, setCanvasInfo] = useState({ W: 1080, H: 1080, bg: { color: '#ffffff', alpha: 1, transparent: false } });
+  // Group rows folded shut in the layers panel — panel state only, not document state (default: open).
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   // Layer-panel thumbnails: generated on demand from the fabric object itself (toDataURL at a
   // small multiplier), cached per layer id and invalidated on every scene change — same
   // version-keyed cache contract as the vanilla demo's layerThumb/_thumbVer, since the headless
@@ -583,6 +1270,9 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
      after the fact — a confirm() can only ask beforehand, which people click through. */
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
+  // Border's advanced rows (style / align / caps / join) — shut until the settings button opens them.
+  const [strokeAdvOpen, setStrokeAdvOpen] = useState(false);
+  const [maskRefine, setMaskRefine] = useState(null);   // Keep/Remove touch-up brush ('keep'|'remove'|null)
   const toast = useCallback((message, action) => {
     const id = ++toastIdRef.current;
     setToasts(t => [...t, { id, message, action }]);
@@ -628,20 +1318,26 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   };
   const [maskEdit, setMaskEdit] = useState(null);
   const [hist, setHist] = useState({ past: 1, future: 0 });
-  const [aiBusy, setAiBusy] = useState(false);
   const [aiMsg, setAiMsg] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiPreset, setAiPreset] = useState(null);       // AI tab style preset name, or null
+  const [aiRef, setAiRef] = useState(null);             // attached reference image (dataURL), or null
+  const [aiMsgErr, setAiMsgErr] = useState(false);
+  const aiPromptRef = useRef(null), aiRefFileRef = useRef(null);
+  const [aiBusyKind, setAiBusyKind] = useState(null);   // which AI-tab button is spinning
   const [needKey, setNeedKey] = useState(false);
   const [mode_, setMode] = useState(mode || 'dark');
   const [sideTab, setSideTab] = useState('layer');
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [leftTab, setLeftTab] = useState('tool');
+  // Left panel tab: 'layers' | 'ai' (remembered per browser — a convenience, never required)
+  const [leftTab, setLeftTabState] = useState(() => { try { return localStorage.getItem('cm-left-tab') === 'ai' ? 'ai' : 'layers'; } catch (e) { return 'layers'; } });
+  const setLeftTab = (t) => { setLeftTabState(t); try { localStorage.setItem('cm-left-tab', t); } catch (e) {} };
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  // AI card: which action is running (one at a time, like the AI tab's busy lock) + its message
+  const [cardBusy, setCardBusy] = useState(null);
+  const [cardMsg, setCardMsg] = useState('');
   const [snapOn, setSnapOn] = useState(true);
-  // Cosmetic-only checkbox mirroring the vanilla demo's "Auto-detect" toggle: ed.detectObjects()
-  // has no ambient/always-on mode, so this just tracks UI state next to Snap-to-grid rather than
-  // inventing new editor behaviour (see the demo's autodetect-toggle for the same rationale).
-  const [autodetectOn, setAutodetectOn] = useState(true);
   // Rail flyout: index into TOOLGROUPS of the group whose sub-tool list is currently open (-1 =
   // none), plus the hover tooltip's text/anchor rect — ports the vanilla demo's flyoutGroup/showTip
   // state onto React so the rail behaves identically (click a multi-tool group to open its flyout,
@@ -673,6 +1369,12 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       link.rel = 'stylesheet'; link.href = FONT_STYLESHEET_URL; link.dataset.cmFonts = 'true';
       document.head.appendChild(link);
     }
+    // The shell's own interface faces — same families/weights the vanilla demo's <head> loads.
+    if (typeof document !== 'undefined' && !document.querySelector('link[data-cm-ui-fonts]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet'; link.href = UI_FONT_URL; link.dataset.cmUiFonts = 'true';
+      document.head.appendChild(link);
+    }
   }, []);
 
   useEffect(() => {
@@ -686,7 +1388,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     // Ports the vanilla demo's drawOverlays exactly (its own header comment calls it "the
     // reference implementation other UIs can copy") — kept pixel-for-pixel identical rather than
     // reinvented, so the two shells read as the same editor.
-    let dragGuides = null, hoverPreview = null, penBuild = null, brushCursor = null, gradAxis = null;
+    let dragGuides = null, hoverPreview = null, penBuild = null, brushCursor = null, gradAxis = null, pickBusy = null;
     /* Gradient axis while dragging — the Figma-style handle: a thin white line, a round nub on the
        line at every stop, and a colour swatch floating just off it, first stop accented. Radial
        adds the circle its falloff sweeps. Same drawing as the vanilla demo's. */
@@ -828,6 +1530,25 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
         ctx.strokeStyle = 'rgba(239,106,45,.65)'; ctx.stroke(p);
         ctx.setLineDash([]);
       }
+      // Geometry: straighten guide grid (while dragging) and 4-corner perspective handles — both
+      // computed in core (scene coords); this only strokes them. Same drawing as the vanilla demo.
+      if (ed.geometryGuide) {
+        ctx.lineWidth = 1 / v[0]; ctx.strokeStyle = 'rgba(255,255,255,.55)';
+        ctx.beginPath(); ed.geometryGuide.forEach(([a, b]) => { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }); ctx.stroke();
+      }
+      const persp = ed.perspective;
+      if (persp) {
+        const [p0, p1, p2, p3] = persp.corners;
+        ctx.lineWidth = 1 / v[0]; ctx.strokeStyle = 'rgba(255,255,255,.5)';
+        ctx.beginPath(); persp.lines.forEach(([a, b]) => { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }); ctx.stroke();
+        ctx.lineWidth = 2 / v[0]; ctx.strokeStyle = persp.valid ? '#d4ff45' : '#e5484d';
+        ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y); ctx.closePath(); ctx.stroke();
+        persp.corners.forEach((c, i) => {
+          ctx.beginPath(); ctx.arc(c.x, c.y, (i === persp.active ? 8 : 6) / v[0], 0, 7);
+          ctx.fillStyle = i === persp.active ? '#d4ff45' : 'rgba(20,20,23,.9)'; ctx.fill();
+          ctx.lineWidth = 2 / v[0]; ctx.strokeStyle = '#d4ff45'; ctx.stroke();
+        });
+      }
       if (ed.crop) {
         const c = ed.crop;
         ctx.fillStyle = 'rgba(0,0,0,0.48)';
@@ -838,7 +1559,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
           ctx.beginPath(); ctx.moveTo(c.x + c.w * i / 3, c.y); ctx.lineTo(c.x + c.w * i / 3, c.y + c.h); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(c.x, c.y + c.h * i / 3); ctx.lineTo(c.x + c.w, c.y + c.h * i / 3); ctx.stroke();
         }
-        const hs = 5.5 / v[0]; ctx.fillStyle = '#ef6a2d';
+        const hs = 5.5 / v[0]; ctx.fillStyle = '#4f8ff0';   // same accent as the demo's overlays
         for (const [hx, hy] of [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h],
                                 [c.x + c.w / 2, c.y], [c.x + c.w / 2, c.y + c.h], [c.x, c.y + c.h / 2], [c.x + c.w, c.y + c.h / 2]])
           ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
@@ -861,20 +1582,17 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       }
       if (gradAxis) drawGradientAxis(ctx, gradAxis, v[0]);
       if (brushCursor) drawBrushCursor(ctx, brushCursor, v[0]);
-      if (penBuild && penBuild.pts.length) {
-        ctx.strokeStyle = '#ef6a2d'; ctx.lineWidth = 1.4 / v[0]; ctx.setLineDash([]);
-        ctx.beginPath();
-        penBuild.pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-        ctx.stroke();
-        const r = 3.5 / v[0];
-        penBuild.pts.forEach((p, i) => {
-          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7);
-          if (i === 0) { ctx.fillStyle = '#ef6a2d'; ctx.fill(); } else { ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#ef6a2d'; ctx.lineWidth = 1.2 / v[0]; ctx.stroke(); }
-        });
-      }
+      // Pen path being drawn / vector edit mode — core's drawPenOverlay, shared with the demo.
+      if (penBuild) drawPenOverlay(ctx, penBuild, v[0], { accent: '#4f8ff0' });
+      // magic wand / object select still computing: spinning ring at the pointer
+      if (pickBusy) drawPickSpinner(ctx, pickBusy, v[0], { accent: '#4f8ff0' });
       ctx.restore();
     };
-    ed.fc.on('after:render', drawOverlays);
+    // Only for real on-screen redraws. Fabric also fires after:render for OFFSCREEN renders (each
+    // magic wand / object select pick captures the scene with the zoom reset to 100%, and so do
+    // exports and the Compare snapshot) — drawing the overlays then used the temporary 100% transform,
+    // flashing the selection and hover outlines oversized and shifted off the artboard.
+    ed.fc.on('after:render', (opt) => { if (opt && opt.ctx && opt.ctx !== ed.fc.getContext()) return; drawOverlays(); });
     // Fabric's own click-to-select (no edit made) doesn't go through commit()/activate(), so
     // 'change' alone misses it — without these, layers() (and activeLayer/Fill below) stay stale
     // after a plain click on the canvas.
@@ -883,6 +1601,8 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     // activation and edits committed to history; the raw fabric object:moving/scaling/rotating
     // events keep X/Y/W/H/angle live while a drag is still in progress (before object:modified).
     const refreshProps = () => setProps(readProps(ed));
+    const refreshCanvasInfo = () => setCanvasInfo({ W: ed.W, H: ed.H, bg: ed.canvasBackground() });
+    refreshCanvasInfo();
     ed.fc.on('selection:created', refreshLayers);
     ed.fc.on('selection:updated', refreshLayers);
     ed.fc.on('selection:cleared', refreshLayers);
@@ -903,8 +1623,26 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
         setShowExtendBanner(frac >= 0.12);
       }, 400);
     };
+    let lastTool = ed.tool;
+    // Gradient stop swatch clicked on the canvas: open the native colour picker right at the swatch
+    // (a hidden <input type=color> parked there) and recolour that stop live as the user picks.
+    const gradPick = document.createElement('input');
+    gradPick.type = 'color'; gradPick.tabIndex = -1; gradPick.setAttribute('aria-label', 'Gradient stop colour');
+    gradPick.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;margin:0';
+    document.body.appendChild(gradPick);
+    let gradPickIdx = -1;
+    gradPick.addEventListener('input', () => { if (gradPickIdx >= 0) ed.setGradientStopColor(gradPickIdx, gradPick.value); });
+    const openGradPick = (p) => {
+      gradPickIdx = p.index; gradPick.value = p.color;
+      gradPick.style.left = p.clientX + 'px'; gradPick.style.top = (p.clientY + 12) + 'px';
+      try { gradPick.showPicker(); } catch (_) { gradPick.click(); }
+    };
     const offs = [
       ed.on('tool', t => {
+        // picking a tool brings its options (Properties tab) into view — except selection tools and
+        // the AI insert, which are routinely used to build a mask for the AI Assist tab
+        if (t !== lastTool && t !== 'select' && !SEL_TOOLS.includes(t) && t !== 'aiinsert') setSideTab('layer');
+        lastTool = t;
         setTool(t); if (t !== 'aiinsert') setAiInsert(null); if (t !== 'crop') ed.setToolOptions({ cropRatio: 0 }); refreshExtendBanner();
         // Leaving objectselect/hoverselect must drop the last hover-preview outline — otherwise it
         // stays drawn (see the hoverPreview render gate above) until another 'hover' event happens
@@ -912,8 +1650,11 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
         if (t !== 'objectselect' && t !== 'hoverselect') { hoverPreview = null; ed.fc.requestRenderAll(); }
       }),
       ed.on('history', h => setHist(h)),
-      ed.on('change', () => {
-        thumbVerRef.current++; setLayers(ed.layers()); refreshProps();
+      ed.on('change', (e) => {
+        // a live (mid-drag) adjustment edit only needs the panel values — skip the layer-thumbnail
+        // rebuild until the release commit
+        if (e && e.live) { refreshProps(); return; }
+        thumbVerRef.current++; setLayers(ed.layers()); refreshProps(); refreshCanvasInfo();
         if (!compareSnapshotRef.current) { compareSnapshotRef.current = ed.exportPNG(); setCompareReady(true); }
         refreshExtendBanner();
       }),
@@ -921,17 +1662,28 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       ed.on('guides', g => { dragGuides = g; ed.fc.requestRenderAll(); }),
       ed.on('selection', s => { refreshProps(); setSelMsg(''); setObjselectBusy(false); setSelCount(s ? (selectionPolys(s) || []).length : 0); ed.fc.requestRenderAll(); startAntsLoopIfNeeded(); }),
       ed.on('crop', () => ed.fc.requestRenderAll()),
+      ed.on('perspective', p => { setPerspActive(!!p); ed.fc.requestRenderAll(); }),
+      ed.on('geometryguide', () => ed.fc.requestRenderAll()),
       ed.on('pen', build => { penBuild = build; ed.fc.requestRenderAll(); }),
+      ed.on('pathedit', p => setPathEditing(!!p)),
+      ed.on('gradientstoppick', openGradPick),
+      ed.on('pickbusy', b => { pickBusy = b; }),   // the editor re-renders every frame while busy
+      () => gradPick.remove(),
       ed.on('brushcursor', c => { brushCursor = c; ed.fc.requestRenderAll(); }),
       ed.on('gradientaxis', g => { gradAxis = g; ed.fc.requestRenderAll(); }),
       ed.on('clonesource', s => setCloneSrc(s)),
       ed.on('maskedit', m => { setMaskEdit(m); setLayers(ed.layers()); }),
+      ed.on('maskrefine', m => setMaskRefine(m)),
       ed.on('aiinsert', ({ pt, region }) => setAiInsert({ pt, region, prompt: '', busy: false, msg: '' })),
       ed.on('hover', h => { hoverPreview = h; ed.fc.requestRenderAll(); setObjselectBusy(false); }),
-      ed.on('error', () => setObjselectBusy(false)),
+      ed.on('error', (ev) => {
+        setObjselectBusy(false);
+        // Right-click menu actions have no panel of their own to report into.
+        if (ev && ev.source === 'menu') toast(ev.message || SEL_REASON_MSG[ev.reason] || 'That didn’t work.');
+      }),
       ed.on('objcount', n => setObjCount(n)),
       ed.on('zoom', z => setZoomPct(Math.round((z || ed.fc.getZoom() || 1) * 100))),
-      ed.on('resize', () => fitToScreen()),
+      ed.on('resize', () => { fitToScreen(); refreshCanvasInfo(); }),
     ];
     const onObjselectDown = () => {
       if (ed.tool !== 'objectselect' && ed.tool !== 'hoverselect' && ed.tool !== 'magicwand') return;
@@ -946,7 +1698,10 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     } else if (ai && typeof ai === 'object') {
       ed.ai.register(ai);
     }
-    const stops = [installKeybindings(ed)];
+    const stops = [installKeybindings(ed, document, { toolGroups: TOOLGROUPS }),
+      // Right-click menu — core builds the items, mountContextMenu draws them (shared with the demo).
+      // Mounted inside .cm-root so the --cm-* theme tokens reach it.
+      mountContextMenu(ed, { root: rootRef.current || document.body, vars: { panel: 'var(--cm-panel-2)', line: 'var(--cm-line)', ink: 'var(--cm-ink)', dim: 'var(--cm-dim-2)', hover: 'var(--cm-accent)', hoverInk: 'var(--cm-accent-ink)', danger: 'var(--cm-danger)' } })];
     if (bridge) {
       stops.push(installBridge(src => { ed.openImage(src); trackAsset(src, 'Opened image'); }));
       stops.push(installDropImport(stageRef.current, src => { ed.addImage(src); trackAsset(src, 'Dropped image'); }));
@@ -1054,22 +1809,6 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     if (edRef.current) edRef.current.setVoidColor((THEMES[mode_] || THEMES.dark).stage);
   }, [mode_]);
 
-  // Paints each range input's own filled-track background (webkit has no way to style the
-  // "already-scrubbed" portion of a native slider's track from CSS alone) — same paintRangeFill
-  // approach as the vanilla demo, scoped to this root and re-run on every render plus on live drag
-  // input (React's onChange alone would leave the fill stale mid-drag before the next commit).
-  useEffect(() => {
-    const root = rootRef.current; if (!root) return;
-    const paint = (el) => {
-      const min = +el.min || 0, max = +el.max || 100, val = +el.value;
-      const pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
-      el.style.background = `linear-gradient(to right, var(--cm-accent) ${pct}%, var(--cm-line) ${pct}%)`;
-    };
-    root.querySelectorAll('input[type=range]').forEach(paint);
-    const onInput = (e) => { if (e.target.matches('input[type=range]')) paint(e.target); };
-    root.addEventListener('input', onInput);
-    return () => root.removeEventListener('input', onInput);
-  });
 
   const ed = () => edRef.current;
   const pick = useCallback((t) => ed().setTool(t), []);
@@ -1123,10 +1862,26 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   const stack = (dir) => activeLayer && ed().moveLayer(activeLayer.id, dir);
   const groupSel = () => showSelResult(ed().groupSelection());
   const ungroupSel = () => showSelResult(ed().ungroupSelection());
-  const setAdjust = (patch) => {
-    if (props.isAdjustment) ed().setAdjustmentParams(activeLayer?.id, patch);
-    else ed().setImageFilters(patch);
+  // live: render without an undo step (slider drags / curve edits); commitAdjust() pushes the one
+  // undo step on release — see Editor#setImageFilters
+  const setAdjust = (patch, live = false) => {
+    if (props.isAdjustment) ed().setAdjustmentParams(activeLayer?.id, patch, { live });
+    else ed().setImageFilters(patch, { live });
   };
+  const commitAdjust = () => ed().commitLive(props.isAdjustment ? 'adjustment' : 'filters');
+  const [showCurves, setShowCurves] = useState(false);
+  const [perspActive, setPerspActive] = useState(false);
+  const [pathEditing, setPathEditing] = useState(false);   // vector edit mode on a path layer
+  const [showHsl, setShowHsl] = useState(false);
+  const setGeom = (patch, live = false) => ed().setImageGeometry(patch, { live });
+  const commitGeom = () => ed().setImageGeometry({});   // non-live no-op patch: drops the guide grid + pushes the undo step
+  // histogram behind the curves editor — recomputed per selected layer (not per edit: it shows
+  // the layer's input, which adjustments don't change), and only while the editor is open
+  const [histogram, setHistogram] = useState(null);
+  useEffect(() => {
+    if (!showCurves || !(props.isImage || props.isAdjustment) || !edRef.current) { setHistogram(null); return; }
+    setHistogram(edRef.current.getImageHistogram());
+  }, [showCurves, activeLayer?.id, props.isImage, props.isAdjustment]);
   const setText = (patch) => ed().setTextProps(patch);
   // Fill-gradient editor: angle isn't retrievable from a Fabric gradient object (it's baked into
   // absolute coords), so it's tracked locally the same way the demo tracks it — kept across
@@ -1134,7 +1889,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   // angle is unknown, so this just starts back at 0 for it).
   const [fgAngle, setFgAngle] = useState(0);
   const DEFAULT_GRADIENT_STOPS = [{ offset: 0, color: '#ef6a2d' }, { offset: 1, color: '#7c3aed' }];
-  const setSolidFillMode = () => setFillColor(props.fill);
+  const setSolidFillMode = () => setFillColor(props.fill, props.fillAlpha);
   const setGradientFillMode = () => ed().setShapeGradient((props.shapeGradient && props.shapeGradient.stops) || DEFAULT_GRADIENT_STOPS, 'linear', fgAngle);
   const setShapeGradientPatch = (patch) => {
     const cur = props.shapeGradient || { type: 'linear', stops: DEFAULT_GRADIENT_STOPS };
@@ -1215,10 +1970,13 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   }, []);
 
   const setBlend = (blend) => activeLayer && ed().setLayer(activeLayer.id, { blend });
-  const setOpacity = (opacity) => activeLayer && ed().setLayer(activeLayer.id, { opacity });
-  const setFillColor = (color) => ed().setFill(color);
-  const setStroke = (patch) => ed().setStroke(patch);
-  const setNumeric = (patch) => ed().setNumeric(patch);
+  // live: a slider drag is one undo step, not one per input event
+  const setOpacity = (opacity) => activeLayer && ed().setLayer(activeLayer.id, { opacity }, { live: true });
+  // Colour pickers/hex fields hand over a bare hex — re-apply the current opacity so recolouring
+  // a 40% fill doesn't silently snap it back to 100%.
+  const setFillColor = (color, alpha = props.fillAlpha) => ed().setFill(withAlpha(color, alpha));
+  const setStroke = ({ alpha = props.strokeAlpha, ...patch }) => ed().setStroke('color' in patch ? { ...patch, color: withAlpha(patch.color, alpha) } : patch);
+  const setNumeric = (patch, opts) => ed().setNumeric(patch, opts);
   const flip = (axis) => ed().flipLayer(axis);
   const centerH = () => ed().fc.getActiveObject() && ed().alignActiveSelection('center');
   const centerV = () => ed().fc.getActiveObject() && ed().alignActiveSelection('middle');
@@ -1247,15 +2005,40 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   const clipToSel = () => { if (!hasResolvableLayer()) { setSelMsg('Select a layer to clip first.'); return; } ed().clipLayerToSelection(); setSelMsg(''); };
   const clearClip = () => { if (!hasResolvableLayer()) { setSelMsg('Select a layer first.'); return; } ed().clearLayerClip(); setSelMsg(''); };
   const [detectResults, setDetectResults] = useState([]);
-  const detectObjects = async () => {
-    setDetectResults([]);
-    setSelMsg('Detecting…');
-    const r = await ed().detectObjects();
-    if (r.status !== 'ok') { showSelResult(r); return; }
-    setSelMsg(r.result.boxes.length ? '' : 'No objects detected.');
-    setDetectResults(r.result.boxes);
+  const [detectRan, setDetectRan] = useState(false);
+  const runCard = async (key, fn) => {
+    setCardBusy(key); setCardMsg('');
+    try { return await fn(); } finally { setCardBusy(null); }
   };
+  // Results land in the AI Vision tab (switched to automatically); failures go on the card, since
+  // the tab's list may not be what's on screen.
+  const detectObjects = async () => {
+    const r = await runCard('detect', () => ed().detectObjects());
+    setDetectResults([]);
+    if (r.status !== 'ok') { setCardMsg(r.message || SEL_REASON_MSG[r.reason] || r.reason); return; }
+    setDetectResults(r.result.boxes); setDetectRan(true);
+    setLeftTab('ai');
+  };
+  // method: undefined = AI when keyed, else offline; 'local' = always offline (same messages as the demo)
+  const removeBg = async (method) => {
+    const r = await runCard(method === 'local' ? 'removebg-local' : 'removebg', () => ed().removeBackground(method ? { method } : undefined));
+    setCardMsg(r.status !== 'ok' ? (r.message || r.reason)
+      : r.method === 'ai'
+        ? 'Background removed (AI cutout) — it\'s a layer mask: refine it with the brush, or undo.'
+        : 'Background removed offline — it\'s a layer mask. Edit the mask to touch it up with Keep / Remove, or undo.'
+          + (r.aiFallback ? (r.aiFallback === 'weak_cutout' ? ' The AI result didn\'t separate a subject, so the offline cutout was used.' : ' AI was unavailable, so the offline cutout was used.') : ''));
+  };
+  const autoShadow = () => { const r = ed().toggleAutoShadow(); if (!r) setCardMsg('Select a layer first.'); };
   const selectDetected = (box) => ed().selectDetectedBox(box);
+  // Detected subjects → real layers (one box, or all of them). Clears the list afterwards: the
+  // boxes were measured against the pre-convert composition and no longer describe the new layers.
+  const detectedToLayers = async (boxes) => {
+    const r = await runCard('tolayers', () => ed().detectedBoxesToLayers(boxes, bgMode));
+    if (r.status !== 'ok') { setCardMsg(r.message || SEL_REASON_MSG[r.reason] || r.reason); return; }
+    setDetectResults([]); setDetectRan(false);
+    setCardMsg(`Created ${r.result} layer${r.result === 1 ? '' : 's'} — undo to revert.`);
+    setLeftTab('layers');
+  };
   const [exportOpen, setExportOpen] = useState(false);
   const [csOpen, setCsOpen] = useState(false);
   const [csW, setCsW] = useState(width);
@@ -1271,29 +2054,18 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     document.addEventListener('click', onDocClick);
     return () => document.removeEventListener('click', onDocClick);
   }, [exportOpen]);
-  const runAI = async () => {
-    if (!aiPrompt.trim()) return;
-    setAiBusy(true); setAiMsg('');
-    const r = await ed().aiEdit(aiPrompt.trim());
-    setAiBusy(false);
-    setAiMsg(r.status === 'ok' ? 'Applied ✓ (undo to revert)' : r.message || r.reason);
-  };
-  // "Replace background" — aiBgSwap() — previously absent from the React shell entirely (the
-  // vanilla demo has it as its own prompt+button, separate from the general "Apply AI edit"
-  // magic-edit box). Shares the AI tab's aiBusy/aiMsg state, same "every AI action in this tab
-  // disables while any one is in flight" contract runAI already has.
-  const [aiBgPrompt, setAiBgPrompt] = useState('');
-  const runAiBgSwap = async () => {
-    if (!aiBgPrompt.trim()) return;
-    setAiBusy(true); setAiMsg('');
-    const r = await ed().aiBgSwap(aiBgPrompt.trim());
-    setAiBusy(false);
-    setAiMsg(r.status === 'ok' ? 'Applied ✓ (undo to revert)' : r.message || r.reason);
-  };
   const saveKey = (k) => { ed().ai.provider().setKey(k); setNeedKey(!k); };
 
   // ── Design tab: canvas-level background/fill tools and add-element shortcuts ────────────
   const [designBusy, setDesignBusy] = useState(false);
+  const [stickerCat, setStickerCat] = useState(0);
+  // Design ▸ Add element: Text / Box / Circle land centred and selected right away (demo #add-text etc.)
+  const addCentred = (kind) => {
+    const e = ed(), at = { x: e.W / 2, y: e.H / 2 };
+    const o = kind === 'text' ? makeText(e.fabric, at, { fontSize: 48 }) : makeShape(e.fabric, kind, at, e.toolOpts);
+    if (!o) return;
+    e.fc.add(o); e.fc.setActiveObject(o); e.commit(kind === 'text' ? 'text' : 'shape'); e.setTool('select');
+  };
   // Extend-background nudge: a floating banner over the canvas that appears once enough of the
   // artboard is still empty, offering the same AI-extend action as the Design tab's own button —
   // debounced (400ms) since it re-samples the flattened canvas and 'change' events can fire in
@@ -1306,7 +2078,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     setDesignBusy(true); setDesignMsg('');
     const r = await ed().aiExtendBackground();
     setDesignBusy(false);
-    setDesignMsg(r.status === 'ok' ? '' : r.message || r.reason);
+    setDesignMsg(r.status === 'ok' ? 'Applied ✓ (undo to revert)' : r.message || r.reason);
   };
   const onExtendBannerClick = async () => {
     setShowExtendBanner(false);
@@ -1403,8 +2175,10 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   const exportSvg = () => {
     const blob = new Blob([ed().exportSVG()], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
-    if (onExport) onExport(url); else downloadURL(url, 'canvasmith.svg');
-    URL.revokeObjectURL(url);
+    // A host's onExport usually reads the URL asynchronously (fetch → upload/save), so revoking
+    // synchronously would hand it a dead link; give it a minute before releasing the blob.
+    if (onExport) { onExport(url); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    else { downloadURL(url, 'canvasmith.svg'); URL.revokeObjectURL(url); }
   };
   // Scene (artboard) px -> screen px, via the live viewportTransform — shared by the region-review
   // hover-preview SVG and the AI-insert popover positioning.
@@ -1453,20 +2227,20 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     const w = Math.max(12, (bbox.width || 0) / 100 * ed().W), h = Math.max(12, (bbox.height || 0) / 100 * ed().H);
     const rt = REGION_COLOR[rg.type] ? rg.type : 'decorative';
     const fabric = ed().fabric;
-    const r = new fabric.Rect({
+    const r = outlineRegion(new fabric.Rect({
       left: x, top: y, width: w, height: h,
-      fill: REGION_COLOR[rt] + '1f', stroke: REGION_COLOR[rt], strokeWidth: 2, strokeDashArray: [7, 5],
+      fill: REGION_COLOR[rt] + REGION_FILL_ALPHA, stroke: REGION_COLOR[rt], strokeWidth: 2.5, strokeDashArray: [8, 4],
       strokeUniform: true, rx: 3, ry: 3, cornerColor: REGION_COLOR[rt], cornerStyle: 'circle', transparentCorners: false, objectCaching: false,
-    });
+    }));
     r.set({ id: 'r' + Math.random().toString(36).slice(2, 9), role: 'region', regionType: rt, rcontent: rg.content || '', rstyle: rg.style || null, name: rg.name || REGION_NAME[rt], renamed: !!rg.name });
     return r;
   };
   const makeFreehandRegionObj = (pts, rg = {}) => {
     const fabric = ed().fabric;
-    const poly = new fabric.Polygon(pts.map(p => ({ x: p.x, y: p.y })), {
-      fill: REGION_COLOR.product + '1f', stroke: REGION_COLOR.product, strokeWidth: 2, strokeDashArray: [7, 5],
+    const poly = outlineRegion(new fabric.Polygon(pts.map(p => ({ x: p.x, y: p.y })), {
+      fill: REGION_COLOR.product + REGION_FILL_ALPHA, stroke: REGION_COLOR.product, strokeWidth: 2.5, strokeDashArray: [8, 4],
       strokeUniform: true, cornerColor: REGION_COLOR.product, cornerStyle: 'circle', transparentCorners: false, objectCaching: false,
-    });
+    }));
     poly.set({ id: 'r' + Math.random().toString(36).slice(2, 9), role: 'region', regionType: 'product', rcontent: rg.content || '', rstyle: rg.style || null, name: rg.name || REGION_NAME.product, renamed: !!rg.name, isFreehand: true });
     return poly;
   };
@@ -1502,6 +2276,10 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   };
   const closeReview = (removeBoxes = true) => {
     if (removeBoxes) regionObjects().forEach(o => ed().fc.remove(o));
+    if (polyDraftShapeRef.current) { ed().fc.remove(polyDraftShapeRef.current); polyDraftShapeRef.current = null; }
+    if (dragBuildRef.current && dragBuildRef.current.shape) ed().fc.remove(dragBuildRef.current.shape);
+    // Closing mid-draw must hand the canvas back in its normal interactive state.
+    ed().fc.selection = true; ed().fc.skipTargetFind = false; ed().fc.defaultCursor = 'default';
     ed().fc.discardActiveObject();
     ed().fc.renderAll();
     reviewStateRef.current = null;
@@ -1516,6 +2294,9 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     if (mode) ed().fc.discardActiveObject();
     if (mode === 'maglasso' && !ed()._edgeMap) ed().buildMagneticEdgeMap();
     ed().fc.selection = !mode;
+    // While drawing, NO object may take the press — otherwise mousedown on the photo (or any layer)
+    // makes Fabric grab and drag that layer instead of starting the box/lasso/polygon/object pick.
+    ed().fc.skipTargetFind = !!mode;
     ed().fc.defaultCursor = mode ? 'crosshair' : 'default';
     ed().fc.getObjects().forEach(o => { if (o.role === 'region') { o.selectable = !mode; o.evented = !mode; } });
     ed().fc.renderAll();
@@ -1537,7 +2318,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   const reviewCanvasDown = (pt) => {
     if (!reviewStateRef.current || !regionDraw) return;
     if (regionDraw === 'object') {
-      if (!reviewStateRef.current.srcImg) return;
+      if (!reviewStateRef.current.srcImg) { setConvertMsg('Still preparing the image — click again in a moment.'); return; }
       setConvertMsg('');
       Promise.resolve(ed().objectPickInImage(reviewStateRef.current.srcImg, pt, ed().toolOpts.tolerance)).then(poly => {
         if (!poly) {
@@ -1663,7 +2444,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     if (mergedPolys && mergedPolys.length) {
       mergedPolys.forEach((pl, i) => {
         const r = makeFreehandRegionObj(pl);
-        r.set({ regionType: first.regionType, rstyle: first.rstyle || null, fill: REGION_COLOR[first.regionType] + '1f', stroke: REGION_COLOR[first.regionType], name: first.renamed ? first.name : REGION_NAME[first.regionType], renamed: first.renamed });
+        r.set({ regionType: first.regionType, rstyle: first.rstyle || null, fill: REGION_COLOR[first.regionType] + REGION_FILL_ALPHA, stroke: REGION_COLOR[first.regionType], name: first.renamed ? first.name : REGION_NAME[first.regionType], renamed: first.renamed });
         fc.add(r); if (i === 0) fc.setActiveObject(r);
       });
     } else {
@@ -1690,7 +2471,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   };
   const setActiveRegionType = (t) => {
     const o = activeRegion(); if (!o) return;
-    o.set({ regionType: t, stroke: REGION_COLOR[t], fill: REGION_COLOR[t] + '1f', cornerColor: REGION_COLOR[t] });
+    o.set({ regionType: t, stroke: REGION_COLOR[t], fill: REGION_COLOR[t] + REGION_FILL_ALPHA, cornerColor: REGION_COLOR[t] });
     if (!o.renamed) o.set('name', REGION_NAME[t]);
     ed().fc.renderAll();
     forceReview();
@@ -1723,9 +2504,14 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       if (r.status === 'ok') {
         const { boxes, textBoxes } = r.result;
         const covered = (t, o) => { const ix = Math.max(0, Math.min(t.x + t.w, o.x + o.w) - Math.max(t.x, o.x)), iy = Math.max(0, Math.min(t.y + t.h, o.y + o.h) - Math.max(t.y, o.y)); return (ix * iy) >= 0.7 * (t.w * t.h); };
-        const txt = (textBoxes || []).filter(t => !boxes.some(o => covered(t, o)));
+        // Also skip anything an existing region (AI or hand-drawn) already covers — re-running
+        // auto-detect used to stack a second box on every object that was already boxed.
+        const existing = regionObjects().map(regionBBox);
+        const inter = (a, o) => Math.max(0, Math.min(a.x + a.w, o.x + o.w) - Math.max(a.x, o.x)) * Math.max(0, Math.min(a.y + a.h, o.y + o.h) - Math.max(a.y, o.y));
+        const fresh = (b) => !existing.some(o => covered(b, o) || inter(b, o) / Math.max(1, b.w * b.h + o.w * o.h - inter(b, o)) > 0.3);
+        const txt = (textBoxes || []).filter(t => !boxes.some(o => covered(t, o)) && fresh(t));
         const add = (b, type) => ed().fc.add(makeRegionRectObj({ type, bbox: { x: b.x / ed().W * 100, y: b.y / ed().H * 100, width: b.w / ed().W * 100, height: b.h / ed().H * 100 } }));
-        boxes.forEach(b => add(b, 'product'));
+        boxes.filter(fresh).forEach(b => add(b, 'product'));
         txt.forEach(b => add(b, 'text'));
         ed().fc.renderAll();
       }
@@ -1740,7 +2526,11 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     setConvertMsg('');
     try {
       const r = await ed().detectRegions();
-      if (r.status === 'ok') { openReview(r.result.flat, r.result.regions); return; }
+      if (r.status === 'ok') {
+        openReview(r.result.flat, r.result.regions);
+        if (r.result.aiError) setConvertMsg(`AI detection failed (${r.result.aiError}) — showing the free local detection only.`);
+        return;
+      }
       // Every failure reason (no_provider / rate_limited / provider_failed / no_regions) now
       // surfaces to the user instead of the button silently resetting with no explanation —
       // previously detectAndConvert() just swallowed a non-'ok' status entirely.
@@ -1827,7 +2617,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   // ── layer panel: thumbnails, rename, drag-to-reorder — ports the vanilla demo's layerThumb/
   // layerSubtitle/renderLayers click+drag handling onto React state instead of direct DOM writes.
   const layerThumb = (id) => {
-    const o = ed().fc.getObjects().find(x => x.id === id);
+    const o = ed()._findLayer(id);
     if (!o || !o.toDataURL) return null;
     const cached = thumbCacheRef.current.get(id);
     if (cached && cached.ver === thumbVerRef.current) return cached.url;
@@ -1841,7 +2631,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     } catch (e) { return null; }
   };
   const layerSubtitle = (l) => {
-    const o = ed().fc.getObjects().find(x => x.id === l.id);
+    const o = ed()._findLayer(l.id);
     if (!o) return l.role;
     const w = Math.round(o.getScaledWidth ? o.getScaledWidth() : (o.width || 0));
     const h = Math.round(o.getScaledHeight ? o.getScaledHeight() : (o.height || 0));
@@ -1852,7 +2642,9 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
     const v = value.trim();
     if (v) ed().setLayer(id, { name: v });
   };
-  const onLayerRowClick = (l) => {
+  const onLayerRowClick = (l, e) => {
+    // Shift/Cmd/Ctrl-click: add to / remove from a multi-selection (then ⌘G groups it).
+    if (e && (e.shiftKey || e.metaKey || e.ctrlKey)) { lastLayerClickRef.current = null; ed().toggleLayerSelection(l.id); return; }
     // Manual double-click detection keyed on the layer id (not the DOM node), same reasoning as
     // the vanilla demo: activate() re-renders the row via React state on selection change, so a
     // native 'dblclick' (which needs both clicks on the SAME node) would miss the common
@@ -1886,65 +2678,370 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
   const palette = THEMES[mode_] || THEMES.dark;
   const style = Object.fromEntries(Object.entries({ ...palette, 'accent-ink': palette.accentInk, ...theme })
     .filter(([k]) => k !== 'accentInk').map(([k, v]) => ['--cm-' + k, v]));
-  /* Layer list lives in the LEFT panel, above the tool options: it is scene state, not tool
-     state, so it stays put as the active tool changes, while the right panel keeps Properties
-     (matches the vanilla demo, where #layers-block sits above #tool-panel). */
-  const layersBlock = (
-    <div className="cm-layers-block">
-      <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>Layers</div>
-      <div style={{ minHeight: 60, maxHeight: 220, overflowY: 'auto' }}>
-        {layers.map(l => {
-          const thumb = layerThumb(l.id);
-          return (
-            <div key={l.id} className="cm-layer" data-on={l.active} data-dragover={dragOverId === l.id} data-dragging={dragLayerId === l.id}
-              draggable={l.role !== 'bg'}
-              onDragStart={e => onLayerDragStart(e, l)} onDragOver={e => onLayerDragOver(e, l)}
-              onDragLeave={() => setDragOverId(id => id === l.id ? null : id)} onDrop={e => onLayerDrop(e, l)} onDragEnd={onLayerDragEnd}
-              onClick={() => { if (renamingId !== l.id) onLayerRowClick(l); }}>
-              <span className="cm-layer-thumb">
-                {thumb ? <img src={thumb} alt="" /> : <Icon name={l.role === 'text' ? 'type' : l.role === 'bg' ? 'duplicate' : 'box'} size={14} />}
-              </span>
-              <span className="cm-eye" onClick={e => { e.stopPropagation(); ed().setLayer(l.id, { visible: !l.visible }); }}><Icon name={l.visible ? 'eye' : 'eyeOff'} size={13} /></span>
-              <span className="cm-eye" title={l.locked ? 'Unlock' : 'Lock'} style={{ opacity: l.locked ? 1 : 0.5 }} onClick={e => { e.stopPropagation(); ed().setLayer(l.id, { locked: !l.locked }); }}><Icon name="lock" size={13} /></span>
-              {renamingId === l.id ? (
-                <input className="cm-layer-rename" defaultValue={l.name} autoFocus
-                  onClick={e => e.stopPropagation()}
-                  onFocus={e => e.target.select()}
-                  onKeyDown={e => { if (e.key === 'Enter') commitRename(l.id, e.target.value); else if (e.key === 'Escape') setRenamingId(null); }}
-                  onBlur={e => commitRename(l.id, e.target.value)} />
-              ) : (
-                <span style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: l.visible ? 1 : 0.4 }}>{l.name}</span>
-                  <span style={{ fontSize: 10, color: 'var(--cm-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{layerSubtitle(l)}</span>
-                </span>
-              )}
-              {l.maskable && (l.hasMask ? (
-                <React.Fragment>
-                  <span className="cm-eye" title={l.editingMask ? 'Stop editing mask' : 'Edit mask'}
-                    style={{ opacity: (l.editingMask || !l.maskEnabled) ? 1 : 0.7, color: l.editingMask ? 'var(--cm-accent)' : undefined }}
-                    onClick={e => { e.stopPropagation(); if (l.editingMask) ed().exitMaskEdit(); else { ed().activate(l.id); ed().enterMaskEdit(l.id); } }}>
-                    <Icon name="mask" size={13} />
-                  </span>
-                  <span className="cm-eye" title="Delete mask" onClick={e => { e.stopPropagation(); ed().removeMask(l.id); }}><Icon name="close" size={13} /></span>
-                </React.Fragment>
-              ) : (
-                <span className="cm-eye" title="Add layer mask" onClick={e => { e.stopPropagation(); ed().addMask(l.id); ed().enterMaskEdit(l.id); }}>
-                  <Icon name="mask" size={13} />
-                </span>
-              ))}
-              <span className="cm-eye" title="Up" onClick={e => { e.stopPropagation(); ed().moveLayer(l.id, 'up'); }}><Icon name="up" size={13} /></span>
-              {l.role !== 'bg' && <span className="cm-eye" title="Delete" onClick={e => { e.stopPropagation(); ed().removeLayer(l.id); }}><Icon name="close" size={13} /></span>}
-            </div>
-          );
-        })}
-      </div>
-      <button className="cm-btn" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => ed().addAdjustmentLayer()}>
-        <Icon name="contrast" size={13} /> Add adjustment layer
-      </button>
+  /* Left panel (matches the vanilla demo's #left-panel): Layers / AI Vision tabs; the Layers view
+     is a toolbar + the layer list + a contextual tool dock that only opens when the active tool has
+     options or a pixel selection / clipped layer / mask edit is live — so with plain Select the
+     panel is just the list; the AI card is pinned under both tabs. */
+  // Per-shape tile glyphs (l.shape, from describeLayer) — same table as the vanilla demo's.
+  const SHAPE_ICON = { rect: 'square', ellipse: 'ellipse', triangle: 'triangle', line: 'line', polygon: 'polygon', star: 'star', pen: 'pen', freehand: 'brush' };
+  const KIND_ICON = { group: 'folder', shape: 'rect', badge: 'tag', adjustment: 'contrast', bg: 'image', paint: 'brush', image: 'image' };
+  const layerTile = (l) => {
+    const raster = l.kind === 'image' || l.kind === 'paint' || (l.kind === 'bg' && !l.fill);
+    const thumb = raster ? layerThumb(l.id) : null;
+    if (thumb) return <span className="cm-layer-thumb"><img src={thumb} alt="" /></span>;
+    if (l.kind === 'text') return <span className="cm-layer-thumb" data-kind="text">Aa</span>;
+    if (l.kind === 'bg' && l.fill) return <span className="cm-layer-thumb"><span style={{ width: 18, height: 18, borderRadius: 5, background: l.fill, border: '1px solid var(--cm-line)' }} /></span>;
+    const tint = (l.kind === 'shape' || l.kind === 'badge') && l.fill && /^#|^rgb/.test(l.fill) ? l.fill : null;
+    return <span className="cm-layer-thumb" data-tint={tint ? '' : undefined} style={tint ? { '--tile': tint } : undefined}><Icon name={(l.kind === 'shape' && SHAPE_ICON[l.shape]) || KIND_ICON[l.kind] || 'box'} size={15} /></span>;
+  };
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
+  const toggleFold = (id) => setCollapsedGroups(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // A group row whose member is focused hands the highlight to that member's row, unless the group
+  // is folded and that row isn't shown (same as the demo).
+  const layerRow = (l) => (
+    <div key={l.id} className="cm-layer" role="listitem" data-on={(l.selected || l.active || l.childActive) && !(l.childActive && !collapsedGroups.has(l.id))} data-visible={l.visible} data-dragover={dragOverId === l.id} data-dragging={dragLayerId === l.id}
+      data-child={l.parentId ? true : undefined} aria-expanded={l.isGroup ? !collapsedGroups.has(l.id) : undefined}
+      draggable={l.role !== 'bg'}
+      onDragStart={e => onLayerDragStart(e, l)} onDragOver={e => onLayerDragOver(e, l)}
+      onDragLeave={() => setDragOverId(id => id === l.id ? null : id)} onDrop={e => onLayerDrop(e, l)} onDragEnd={onLayerDragEnd}
+      onClick={e => { if (renamingId !== l.id) onLayerRowClick(l, e); }}>
+      <span className="cm-lr-toggles">
+        <button className="cm-eye" title={l.visible ? 'Hide' : 'Show'} aria-pressed={!l.visible} data-active={!l.visible} onClick={stop(() => ed().setLayer(l.id, { visible: !l.visible }))}><Icon name={l.visible ? 'eye' : 'eyeOff'} size={14} /></button>
+        <button className="cm-eye" title={l.locked ? 'Unlock' : 'Lock'} aria-pressed={l.locked} data-active={l.locked} onClick={stop(() => ed().setLayer(l.id, { locked: !l.locked }))}><Icon name={l.locked ? 'lock' : 'unlock'} size={13} /></button>
+      </span>
+      {l.isGroup && (
+        <button className="cm-lr-fold" title={collapsedGroups.has(l.id) ? 'Expand group' : 'Collapse group'} aria-label={collapsedGroups.has(l.id) ? 'Expand group' : 'Collapse group'}
+          onClick={stop(() => toggleFold(l.id))}><Icon name="chevronD" size={13} /></button>
+      )}
+      {layerTile(l)}
+      {renamingId === l.id ? (
+        <input className="cm-layer-rename" defaultValue={l.name} autoFocus
+          onClick={e => e.stopPropagation()}
+          onFocus={e => e.target.select()}
+          onKeyDown={e => { if (e.key === 'Enter') commitRename(l.id, e.target.value); else if (e.key === 'Escape') setRenamingId(null); }}
+          onBlur={e => commitRename(l.id, e.target.value)} />
+      ) : (
+        <span className="cm-layer-meta">
+          <span className="nm" title={l.name}>{l.name}</span>
+          <span className="sub">{l.subtitle || layerSubtitle(l)}</span>
+        </span>
+      )}
+      <span className="cm-layer-actions">
+        <button title="Move up" onClick={stop(() => ed().moveLayer(l.id, 'up'))}><Icon name="up" size={12} /></button>
+        {l.maskable && (l.hasMask ? (
+          <React.Fragment>
+            <button title={l.editingMask ? 'Stop editing mask' : 'Edit mask'} data-active={l.editingMask || !l.maskEnabled}
+              onClick={stop(() => { if (l.editingMask) ed().exitMaskEdit(); else { ed().activate(l.id); ed().enterMaskEdit(l.id); } })}><Icon name="mask" size={12} /></button>
+            <button title="Delete mask" onClick={stop(() => ed().removeMask(l.id))}><Icon name="close" size={12} /></button>
+          </React.Fragment>
+        ) : (
+          <button title="Add layer mask" onClick={stop(() => { ed().addMask(l.id); ed().enterMaskEdit(l.id); })}><Icon name="mask" size={12} /></button>
+        ))}
+        {l.role !== 'bg' && <button title="Delete" onClick={stop(() => ed().removeLayer(l.id))}><Icon name="close" size={12} /></button>}
+      </span>
     </div>
   );
+  // Recursive: a group nested inside a group renders its own indented block of members.
+  const layerTree = (l) => !l.isGroup ? layerRow(l) : (
+    <React.Fragment key={l.id}>
+      {layerRow(l)}
+      {!collapsedGroups.has(l.id) && <div className="cm-layer-children" role="group">{l.children.map(layerTree)}</div>}
+    </React.Fragment>
+  );
+  const layerRows = layers.map(layerTree);
+  const ADD_ITEMS = [['type', 'Text', () => ed().setTool('type')], ['rect', 'Rectangle', () => ed().setTool('rect')], ['ellipse', 'Ellipse', () => ed().setTool('ellipse')], ['image', 'Image…', addImagePick], ['brush', 'Paint layer', () => ed().setTool('brush')]];
+  const layersToolbar = (
+    <div className="cm-lp-toolbar">
+      <button className="cm-lp-tbtn" title="Add layer" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={e => { e.stopPropagation(); setAddMenuOpen(v => !v); }}><Icon name="addcircle" size={16} /></button>
+      {addMenuOpen && (
+        <div className="cm-lp-menu" role="menu" onKeyDown={e => { if (e.key === 'Escape') setAddMenuOpen(false); }}>
+          {ADD_ITEMS.map(([ic, label, fn], i) => (
+            <button key={label} role="menuitem" autoFocus={i === 0} onClick={() => { setAddMenuOpen(false); fn(); }}><Icon name={ic} size={14} /><span>{label}</span></button>
+          ))}
+        </div>
+      )}
+      <button className="cm-lp-tbtn" title="Group selected layers" disabled={!props.canGroup} onClick={groupSel}><Icon name="folderplus" size={16} /></button>
+      <button className="cm-lp-tbtn" title="Add adjustment layer" onClick={() => ed().addAdjustmentLayer()}><Icon name="contrast" size={16} /></button>
+      <span style={{ flex: 1 }} />
+      <button className="cm-lp-tbtn" title={snapOn ? 'Snap to grid: on' : 'Snap to grid: off'} aria-pressed={snapOn} data-on={snapOn} onClick={toggleSnap}><Icon name="magnet" size={16} /></button>
+      <button className="cm-lp-tbtn" title="Duplicate layer" disabled={!activeLayer} onClick={duplicate}><Icon name="duplicate" size={16} /></button>
+      <button className="cm-lp-tbtn" title="Delete layer" disabled={!activeLayer} onClick={() => activeLayer && ed().removeLayer(activeLayer.id)}><Icon name="trash" size={16} /></button>
+    </div>
+  );
+  const activeObj = edRef.current && edRef.current.fc && edRef.current.fc.getActiveObject();
+  const activeHasClip = !!(activeObj && activeObj.clipPath);
+  const selRelevant = !!props.hasSelectionPixels || SEL_TOOLS.includes(tool) || activeHasClip;
+  const dockOpen = reviewOn || tool !== 'select' || selRelevant || !!maskEdit;
+  const aiProvider = edRef.current && edRef.current.ai && edRef.current.ai._provider;
+  const aiKeyed = !!(aiProvider && (typeof aiProvider.hasKey !== 'function' || aiProvider.hasKey()));
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const close = (e) => { if (!e.target.closest || !e.target.closest('.cm-lp-menu')) setAddMenuOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [addMenuOpen]);
+  // The active tool's options + hint. Rendered at the top of the right Properties tab; during a
+  // convert-to-layers review (which takes over the right panel) it stays on the left instead.
+  const toolDock = dockOpen ? (
+      <div className="cm-dock cm-scroll">
+        {tool === 'crop' && (
+          <React.Fragment>
+            <button className="cm-btn cm-btn-accent" title="Apply crop (Enter)" style={{ marginBottom: 8, width: '100%', justifyContent: 'center' }} onClick={() => ed().applyCrop()}>✓ Apply crop <span className="cm-key-hint">↵ Enter</span></button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--cm-line-soft)' }}>
+            {CROP_RATIOS.map(([label, r]) => {
+              const ratio = r === 'orig' ? ed().W / ed().H : r;
+              const on = r === 'orig' ? opts.cropRatio === (ed().W / ed().H) : opts.cropRatio === r;
+              return (
+                <button key={label} className="cm-chip" data-on={on} onClick={() => ed().setToolOptions({ cropRatio: ratio })}>{label}</button>
+              );
+            })}
+          </div>
+          </React.Fragment>
+        )}
+        {tool === 'pen' && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => ed().finishPen()}>✓ Finish path</button>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => ed().cancelPen()}>Cancel</button>
+            </div>
+            <div className="cm-slider-row" title="Stroke width for open paths">Stroke <input type="range" min="1" max="40" value={opts.penStrokeWidth != null ? opts.penStrokeWidth : 3} onChange={e => ed().setToolOptions({ penStrokeWidth: +e.target.value })} /><span className="cm-tag mono">{opts.penStrokeWidth != null ? opts.penStrokeWidth : 3}</span></div>
+          </div>
+        )}
+        {maskEdit && (
+          <div style={{ background: 'var(--cm-accent)', color: 'var(--cm-accent-ink)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
+            Editing layer mask — paint white to reveal, black to hide.
+            {/* offline cut-outs only: strokes become hints and the cut is re-run around them */}
+            {ed().canRefineCutout(maskEdit.layerId) && (
+              <div style={{ marginTop: 8, fontWeight: 500 }}>
+                Touch up the cut-out — paint over what to keep or remove:
+                <div className="cm-seg" role="group" aria-label="Touch-up brush" style={{ marginTop: 6 }}>
+                  {[['keep', 'Keep'], ['remove', 'Remove']].map(([m, l]) => (
+                    <button key={m} className="cm-btn" data-on={maskRefine === m} aria-pressed={maskRefine === m}
+                      onClick={() => ed().setMaskRefine(maskRefine === m ? null : m)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="cm-row" style={{ marginTop: 8 }}>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center', background: 'var(--cm-panel)', color: 'var(--cm-ink)' }} onClick={() => ed().invertMask(maskEdit.layerId)} title="Swap hidden/visible across the whole mask">
+                Invert mask
+              </button>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center', background: 'var(--cm-panel)', color: 'var(--cm-ink)' }} onClick={() => ed().exitMaskEdit()}>
+                Done editing mask
+              </button>
+            </div>
+          </div>
+        )}
+        {/* SELECT & TRANSFORM header + "Active" status pill — names the section rather than
+            just echoing the raw tool id, matching the demo's tool-name/tool-status-pill. */}
+        <div className="cm-dock-head">
+          <Icon name={tool} size={14} />
+          <span>{tool === 'select' ? 'Select & Transform' : (TOOL_LABELS[tool] || tool)}</span>
+          <span className="cm-status-pill">Active</span>
+        </div>
+        <div className="cm-note" style={{ marginTop: 4 }}>
+          {(tool === 'clone' || tool === 'heal') && cloneSrc
+            ? `Source set at ${Math.round(cloneSrc.x)}, ${Math.round(cloneSrc.y)} — now paint to ${tool === 'heal' ? 'heal with' : 'stamp'} those pixels. ⌥/⇧-click to re-source.`
+            : (TOOL_HINTS[tool] || 'Drag on the canvas to use this tool.')}
+        </div>
+
+
+        {/* Brush/Color section — only the sliders+swatches a given tool can actually read
+            (see COLOR_TOOLS/isPaintTool below), moved out of the always-visible header. */}
+        {isColorTool && (
+          <React.Fragment>
+            {isPaintTool && (
+              <React.Fragment>
+                <div className="cm-slider-row">Size <input type="range" min="2" max="220" value={opts.size} onChange={e => ed().setToolOptions({ size: +e.target.value })} /><span className="cm-tag mono">{opts.size}</span></div>
+                {/* "Soft" is the inverse of the engine's hardness (0 hardness = fully soft
+                    edge) — same knob, flipped so the UI reads as "how soft" not "how hard". */}
+                <div className="cm-slider-row" style={{ marginTop: 6 }}>Soft <input type="range" min="0" max="100" value={Math.round((1 - opts.hardness) * 100)} onChange={e => ed().setToolOptions({ hardness: 1 - (+e.target.value / 100) })} /><span className="cm-tag mono">{Math.round((1 - opts.hardness) * 100)}%</span></div>
+                <div className="cm-slider-row" style={{ marginTop: 6 }}>Opacity <input type="range" min="5" max="100" value={Math.round(opts.opacity * 100)} onChange={e => ed().setToolOptions({ opacity: +e.target.value / 100 })} /><span className="cm-tag mono">{Math.round(opts.opacity * 100)}%</span></div>
+              </React.Fragment>
+            )}
+            {/* Colour only for tools that paint WITH it — the eraser/clone/heal/tone tools ignore it. */}
+            {!NO_COLOR_TOOLS.includes(tool) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+              <input type="color" value={opts.color} onChange={e => ed().setToolOptions({ color: e.target.value, fill: e.target.value })} title="Colour" />
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                {BRUSH_SWATCHES.map(c => (
+                  <button key={c} className="cm-swatch-btn" data-on={c.toLowerCase() === (opts.color || '').toLowerCase()}
+                    style={{ background: c }} title={c}
+                    onClick={() => ed().setToolOptions({ color: c, fill: c })} />
+                ))}
+              </div>
+            </div>}
+          </React.Fragment>
+        )}
+        {/* Clone/Heal need a source point before they do anything at all, and nothing on
+            the canvas says so — this states the step you're on and offers a reset. */}
+        {(tool === 'clone' || tool === 'heal') && (
+          <div>
+            <div className="cm-grp">{tool === 'heal' ? 'Healing brush' : 'Clone stamp'}</div>
+            <div className="cm-note" style={{ marginTop: 6 }}>
+              {cloneSrc
+                ? `Source set at ${Math.round(cloneSrc.x)}, ${Math.round(cloneSrc.y)} — now paint to ${tool === 'heal' ? 'heal with' : 'stamp'} those pixels.`
+                : 'Step 1 — hold ⌥ (Alt) or ⇧ (Shift) and click the area you want to copy FROM.'}
+            </div>
+            <button className="cm-btn" style={{ marginTop: 8, width: '100%', justifyContent: 'center' }}
+              disabled={!cloneSrc} onClick={() => ed().clearCloneSource()}>
+              Reset source
+            </button>
+            <div className="cm-note" style={{ marginTop: 8 }}>⌥-click or ⇧-click re-sources at any time</div>
+          </div>
+        )}
+        {/* Destructive-vs-new-layer, for every pixel tool: by default strokes edit the
+            image itself (at its own resolution), which is what a photo editor does. */}
+        {isPaintTool && tool !== 'eraser' && (
+          <div>
+            <div className="cm-grp">Destination</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, fontSize: 12, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!opts.paintNewLayer} onChange={e => ed().setToolOptions({ paintNewLayer: e.target.checked })} />
+              <span>Paint on a new layer</span>
+            </label>
+            <div className="cm-note" style={{ marginTop: 6 }}>
+              {opts.paintNewLayer
+                ? 'Strokes go to a separate paint layer — the original image is left untouched.'
+                : 'Editing the image itself (the selected layer, or the top image), at its own resolution.'}
+            </div>
+          </div>
+        )}
+
+        {tool === 'magicwand' && (
+          <React.Fragment>
+            <div className="cm-note" style={{ marginTop: 8 }}>
+              {objselectBusy ? 'Finding object…'
+                : selCount > 1 ? selCount + ' selected · ⇧-click (or Add) to keep combining'
+                : selCount === 1 ? 'Selected · ⇧-click to add more, ⌥-click to subtract'
+                : 'Click an object to select it'}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="cm-chip" data-on={opts.addMode}
+              onClick={() => ed().setToolOptions({ addMode: !opts.addMode })}>
+              <Icon name="spark" size={12} /><span>Add{opts.addMode ? ' ✓' : ''}</span>
+            </button>
+            </div>
+            <label style={{ display: 'block', marginTop: 8, fontSize: 11, color: 'var(--cm-dim)' }}>Tolerance
+              <input type="range" min="4" max="128" value={opts.tolerance} style={{ width: '100%' }}
+                onChange={e => ed().setToolOptions({ tolerance: +e.target.value })} />
+            </label>
+            <div className="cm-note" style={{ marginTop: 8 }}>⇧ add · ⌥ subtract · [ ] tolerance</div>
+          </React.Fragment>
+        )}
+        {(tool === 'objectselect' || tool === 'hoverselect') && (
+          <React.Fragment>
+            <div className="cm-row" style={{ alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+              <span style={{ fontWeight: 600 }}>{tool === 'hoverselect' ? 'Hover select' : 'Object select'}</span>
+              <button className="cm-toggle" data-on={opts.addMode}
+                title="Keep adding each clicked object to the selection (same as holding Shift)"
+                onClick={() => ed().setToolOptions({ addMode: !opts.addMode })}>
+                Add{opts.addMode ? ' ✓' : ''}
+              </button>
+            </div>
+            <div className="cm-note" style={{ marginTop: 6 }}>
+              {objselectBusy ? 'Finding object…'
+                : selCount > 1 ? selCount + ' selected · Merge to combine'
+                : objCount ? objCount + (tool === 'hoverselect' ? ' objects · hover to preview, click to select' : ' objects · click to select')
+                : 'No objects found — re-detect'}
+            </div>
+            <label style={{ display: 'block', marginTop: 8, fontSize: 11, color: 'var(--cm-dim)' }}
+              title="How close in colour a pixel must be to the clicked spot to seed the object. Higher = grabs more of the colour before the object is completed.">
+              Colour match
+              <input type="range" min="4" max="96" value={opts.tolerance} style={{ width: '100%' }}
+                onChange={e => ed().setToolOptions({ tolerance: +e.target.value })} />
+            </label>
+            <div className="cm-row" style={{ marginTop: 8 }}>
+              <button className="cm-btn" style={{ width: '100%', justifyContent: 'center' }} disabled={objselectBusy || selCount < 2}
+                title="Select 2+ objects (⇧-click or the Add toggle), then merge them into one shape via polygon clipping"
+                onClick={mergeSel}>Merge{selCount > 1 ? ' (' + selCount + ')' : ''}</button>
+            </div>
+            <div className="cm-row" style={{ marginTop: 6 }}>
+              <button className="cm-btn" disabled={objselectBusy || !selCount} onClick={expandSel}>Expand</button>
+              <button className="cm-btn" disabled={objselectBusy || !selCount} onClick={contractSel}>Contract</button>
+            </div>
+            <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
+              disabled={objselectBusy} title="Select every region on the canvas matching the colour you last clicked, within Colour match"
+              onClick={selectSimilar}>Similar</button>
+            {!!selCount && (
+              <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
+                onClick={() => ed().clearSelection()}>Deselect</button>
+            )}
+            <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
+              disabled={objselectBusy} onClick={redetectObjects}>Re-detect</button>
+            <div className="cm-note" style={{ marginTop: 8 }}>⇧ add · ⌥ subtract · [ ] tolerance · re-click cycles nested</div>
+          </React.Fragment>
+        )}
+
+        {tool === 'gradient' && (
+          <div>
+            <div className="cm-grp">Gradient</div>
+            <div className="cm-row">
+              <button className="cm-btn" data-on={opts.gradientType === 'linear'} onClick={() => ed().setToolOptions({ gradientType: 'linear' })}>Linear</button>
+              <button className="cm-btn" data-on={opts.gradientType === 'radial'} onClick={() => ed().setToolOptions({ gradientType: 'radial' })}>Radial</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+              {opts.gradientStops.map((stop, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="color" value={stop.color} onChange={e => {
+                    const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, color: e.target.value } : s);
+                    ed().setToolOptions({ gradientStops: stops });
+                  }} />
+                  <input type="range" min="0" max="1" step="0.01" value={stop.offset} style={{ flex: 1 }} title="Position" onChange={e => {
+                    const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, offset: +e.target.value } : s);
+                    ed().setToolOptions({ gradientStops: stops });
+                  }} />
+                  <input type="range" min="0" max="1" step="0.01" value={stop.alpha ?? 1} style={{ flex: 1 }} title="Opacity" onChange={e => {
+                    const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, alpha: +e.target.value } : s);
+                    ed().setToolOptions({ gradientStops: stops });
+                  }} />
+                  <button className="cm-icon-btn" disabled={opts.gradientStops.length <= 2} title="Remove stop"
+                    onClick={() => ed().setToolOptions({ gradientStops: opts.gradientStops.filter((_, si) => si !== i) })}>
+                    <Icon name="close" size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="cm-row" style={{ marginTop: 6 }}>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => {
+                const last = opts.gradientStops[opts.gradientStops.length - 1];
+                ed().setToolOptions({ gradientStops: [...opts.gradientStops, { offset: Math.min(1, last?.offset ?? 1), color: last?.color || '#ffffff', alpha: last?.alpha ?? 1 }] });
+              }}>+ Add stop</button>
+              <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} title="Reverse stop order"
+                onClick={() => ed().setToolOptions({ gradientStops: opts.gradientStops.map(s => ({ ...s, offset: 1 - s.offset })).sort((a, b) => a.offset - b.offset) })}>
+                <Icon name="flip" size={13} /> Reverse
+              </button>
+            </div>
+            <div className="cm-note">Drag on the canvas to paint the gradient.</div>
+          </div>
+        )}
+
+
+        {selRelevant && (
+          <div>
+            <div className="cm-grp">Selection</div>
+            <div className="cm-row">
+              <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={expandSel}><Icon name="expand" size={13} /> Expand</button>
+              <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={contractSel}><Icon name="contract" size={13} /> Contract</button>
+            </div>
+            <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }} disabled={!props.hasSelectionPixels} onClick={selectSimilar}>
+              <Icon name="similar" size={13} /> Select Similar Colors
+            </button>
+            <label className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center', opacity: props.hasSelectionPixels ? 1 : 0.4, pointerEvents: props.hasSelectionPixels ? 'auto' : 'none' }}>
+              <Icon name="eyedropper" size={13} /> Recolor selection…
+              <input type="color" style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+                onChange={e => recolorSel(e.target.value)} />
+            </label>
+            <div className="cm-row" style={{ marginTop: 6 }}>
+              <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={clipToSel}><Icon name="crop" size={13} /> Clip layer to selection</button>
+              <button className="cm-btn" disabled={!hasResolvableLayer()} onClick={clearClip}><Icon name="close" size={13} /> Clear clip</button>
+            </div>
+            <div className="cm-note">{selMsg || (!props.hasSelectionPixels ? 'Draw a marquee/lasso selection first — for a text or shape layer’s colour, use Fill in Properties instead.' : '')}</div>
+          </div>
+        )}
+        {!selRelevant && selMsg && <div className="cm-note">{selMsg}</div>}
+      </div>
+  ) : null;
   return (
-    <div className="cm-root" ref={rootRef} style={style} data-cm-mode={mode_}>
+    <div className="cm-root" ref={rootRef} style={style} data-cm-mode={mode_} data-left-collapsed={leftCollapsed} data-side-collapsed={sideCollapsed}>
       <style>{CSS}</style>
       <svg width="0" height="0" style={{ position: 'absolute' }}>
         <defs><linearGradient id="cm-grad-icon" x1="0" y1="0" x2="1" y2="1">
@@ -1956,18 +3053,17 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
           <span style={{ width: 8, height: 8, borderRadius: 2.5, background: 'var(--cm-accent)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--cm-accent) 18%, transparent)' }} />
           Canvasmith
         </strong>
-        <span className="cm-note" title="Every control on this page is a public Editor API call — no framework, no build step." style={{ margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>React shell on the headless core</span>
+        <span className="cm-hdiv" />
         <button className="cm-btn" title="Start a new document (clears the current one)" onClick={newDocument}><Icon name="plus" size={13} /> New</button>
-        <button className="cm-btn" title="Open image…" onClick={openImagePick}><Icon name="duplicate" size={13} /> Open image…</button>
-        <span style={{ width: 1, height: 20, background: 'var(--cm-line)' }} />
+        <button className="cm-btn" title="Open image…" onClick={openImagePick}><Icon name="folder" size={15} /> Open image…</button>
+        <span style={{ flex: 1 }} />
         <button className="cm-icon-btn" title="Undo" disabled={hist.past < 2} onClick={() => ed().undo()}><Icon name="undo" size={14} /></button>
         <button className="cm-icon-btn" title="Redo" disabled={!hist.future} onClick={() => ed().redo()}><Icon name="redo" size={14} /></button>
-        {tool === 'crop' && <button className="cm-btn" onClick={() => ed().applyCrop()}>✓ Apply crop</button>}
-        <span style={{ width: 1, height: 20, background: 'var(--cm-line)' }} />
+        <span className="cm-hdiv" />
         <button className="cm-btn" title="Search tools & actions (⌘K)" onClick={openCmdk}>
           <Icon name="search" size={13} /><span style={{ color: 'var(--cm-dim)', fontSize: 11.5 }}>Search</span><span className="cm-tag mono" style={{ fontSize: 9.5 }}>⌘K</span>
         </button>
-        <span style={{ width: 1, height: 20, background: 'var(--cm-line)' }} />
+        <span className="cm-hdiv" />
         <span style={{ position: 'relative' }}>
           <button className="cm-btn" onClick={openCanvasSize}>Canvas size</button>
           {csOpen && (
@@ -2013,7 +3109,6 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
             </div>
           )}
         </span>
-        <span style={{ flex: 1 }} />
         <div className="cm-zoom-pill">
           <button className="cm-icon-btn" title="Zoom out (−)" onClick={() => setZoomAtCenter(ed().fc.getZoom() * 0.83)}><Icon name="minus" size={14} /></button>
           <button className="cm-btn cm-zoom-pct" title="Reset to fit" onClick={fitToScreen}>{zoomPct}%</button>
@@ -2024,7 +3119,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
         <button className="cm-icon-btn" title={mode_ === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setMode(mode_ === 'dark' ? 'light' : 'dark')}>
           <Icon name={mode_ === 'dark' ? 'sun' : 'moon'} />
         </button>
-        <span style={{ width: 1, height: 20, background: 'var(--cm-line)' }} />
+        <span className="cm-hdiv" />
         {saveStatus && (
           <span className="cm-save-note" data-warn={saveStatus === 'failed' || saveStatus === 'unavailable'}
             title={saveStatus === 'unavailable'
@@ -2035,10 +3130,10 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
             {saveStatus === 'unavailable' ? 'Not autosaved (storage blocked)' : saveStatus === 'failed' ? 'Too large to autosave' : 'Saved'}
           </span>
         )}
-        <button className="cm-icon-btn" disabled={!compareReady} title="Compare with the first-loaded version" onClick={openCompare}>
-          <Icon name="search" size={13} />
+        <button className="cm-btn cm-compare-btn" disabled={!compareReady} title="Compare with the first-loaded version" onClick={openCompare}>
+          <span>Compare</span>
         </button>
-        <span style={{ width: 1, height: 20, background: 'var(--cm-line)' }} />
+        <span className="cm-hdiv" />
         <span className="cm-export-anchor">
           <button className="cm-btn cm-btn-accent cm-export-btn" data-open={exportOpen} onClick={() => setExportOpen(o => !o)}>
             ⬇ Export image <span className="cm-export-caret"><Icon name="chevron" size={10} style={{ transform: 'rotate(-90deg)' }} /></span>
@@ -2089,7 +3184,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                 onMouseLeave={() => setRailTip(null)}
                 onClick={() => { setRailTip(null); pick(shownId); setRailFlyout(f => (ids.length > 1 ? (f === gi ? -1 : gi) : -1)); }}
               >
-                <Icon name={shownId} size={18} />
+                <Icon name={TOOL_ICON[shownId] || shownId} size={18} />
                 {ids.length > 1 && <span className="cm-rail-caret" />}
               </button>
               {railFlyout === gi && (
@@ -2102,7 +3197,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                       role="menuitemradio" aria-checked={id === tool} tabIndex={0}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(id); setRailFlyout(-1); } }}
                       onClick={() => { pick(id); setRailFlyout(-1); }}>
-                      <Icon name={id} size={15} />
+                      <Icon name={TOOL_ICON[id] || id} size={15} />
                       <span style={{ flex: 1 }}>{TOOL_LABELS[id] || id}</span>
                       {TOOL_SHORTCUT[id] && <span className="sc">{TOOL_SHORTCUT[id]}</span>}
                     </div>
@@ -2135,291 +3230,77 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       <button className="cm-collapse-left" data-flip={leftCollapsed} title={leftCollapsed ? 'Show panel' : 'Hide panel'} onClick={() => setLeftCollapsed(s => !s)}>
         <Icon name="chevron" size={13} />
       </button>
-      <div className="cm-left">
+      <div className="cm-left" ref={leftRef}>
         {!leftCollapsed && (
-          <div>
-            {!reviewOn && layersBlock}
-                {maskEdit && (
-                  <div style={{ background: 'var(--cm-accent)', color: 'var(--cm-accent-ink)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
-                    Editing layer mask — paint white to reveal, black to hide.
-                    <div className="cm-row" style={{ marginTop: 8 }}>
-                      <button className="cm-btn" style={{ flex: 1, justifyContent: 'center', background: 'var(--cm-panel)', color: 'var(--cm-ink)' }} onClick={() => ed().invertMask(maskEdit.layerId)} title="Swap hidden/visible across the whole mask">
-                        Invert mask
-                      </button>
-                      <button className="cm-btn" style={{ flex: 1, justifyContent: 'center', background: 'var(--cm-panel)', color: 'var(--cm-ink)' }} onClick={() => ed().exitMaskEdit()}>
-                        Done editing mask
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {/* SELECT & TRANSFORM header + "Active" status pill — names the section rather than
-                    just echoing the raw tool id, matching the demo's tool-name/tool-status-pill. */}
-                <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none', display: 'flex', alignItems: 'center' }}>
-                  <Icon name={tool} size={14} style={{ marginRight: 6 }} />
-                  <span>{tool === 'select' ? 'Select & Transform' : (TOOL_LABELS[tool] || tool)}</span>
-                  <span className="cm-status-pill">Active</span>
-                </div>
+          <div className="cm-lp">
+            <div className="cm-lp-tabs" role="tablist">
+              <button className="cm-lp-tab" role="tab" aria-selected={leftTab === 'layers'} onClick={() => setLeftTab('layers')}><Icon name="layers" size={14} />Layers<span className="cm-lp-count">{layers.length}</span></button>
+              <button className="cm-lp-tab cm-lp-tab-ai" role="tab" aria-selected={leftTab === 'ai'} onClick={() => setLeftTab('ai')}><Icon name="wand" size={14} />AI Vision</button>
+            </div>
+            {leftTab === 'layers' ? (
+              <div className="cm-lp-view">
+                {!reviewOn && layersToolbar}
+                {!reviewOn && <div className="cm-lp-list cm-scroll" role="list">{layerRows}</div>}
+                {reviewOn && toolDock}
+              </div>
+            ) : (
+              <div className="cm-lp-view cm-lp-ai cm-scroll">
+                <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>Detected subjects</div>
                 <div className="cm-note" style={{ marginTop: 0 }}>
-                  {tool === 'select' ? 'Click any layer directly on the artboard or drag a bounding marquee to transform.'
-                    : tool === 'crop' ? 'Drag the handles, then Apply crop in the top bar.'
-                    : tool === 'aiinsert' ? 'Click a spot to draw there — or make a selection first and click inside it: the AI fills exactly that shape.'
-                    : tool === 'pen' ? 'Click to place points; click near the start (or press Enter) to close, Escape to cancel.'
-                    : (tool === 'clone' || tool === 'heal') ? (cloneSrc
-                      ? `Source set at ${Math.round(cloneSrc.x)}, ${Math.round(cloneSrc.y)} — now paint to ${tool === 'heal' ? 'heal with' : 'stamp'} those pixels. ⌥/⇧-click to re-source.`
-                      : `⌥ (Alt)- or ⇧ (Shift)-click to set the source point, then paint ${tool === 'heal' ? 'over the blemish to blend it away' : 'elsewhere to stamp those pixels'}.`)
-                    : 'Drag on the canvas to use this tool.'}
+                  {!detectRan ? <>Run <b>Auto-Detect Subjects</b> below to find the objects in the scene — click one to select it.</>
+                    : detectResults.length ? `${detectResults.length} subject${detectResults.length === 1 ? '' : 's'} found — click one to select it, or turn them into layers.`
+                    : 'No subjects detected. Try the Object select tool on the rail instead.'}
                 </div>
-                {tool === 'pen' && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => ed().finishPen()}>✓ Finish path</button>
-                    <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => ed().cancelPen()}>Cancel</button>
-                  </div>
-                )}
-                {tool === 'crop' && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                    {CROP_RATIOS.map(([label, r]) => {
-                      const ratio = r === 'orig' ? ed().W / ed().H : r;
-                      const on = r === 'orig' ? opts.cropRatio === (ed().W / ed().H) : opts.cropRatio === r;
-                      return (
-                        <button key={label} className="cm-chip" data-on={on} onClick={() => ed().setToolOptions({ cropRatio: ratio })}>{label}</button>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Snap to grid / Auto-detect — two-up custom-checkbox row (not native checkboxes),
-                    matching the demo's .check-row/.check-item. Auto-detect is cosmetic-only here too
-                    (see autodetectOn's declaration) — there's no ambient detection mode in the core. */}
-                <div className="cm-check-row">
-                  <button className="cm-check-item" data-on={snapOn} onClick={toggleSnap}>
-                    <span className="box"><Icon name="check" size={9} /></span>Snap to grid
-                  </button>
-                  <button className="cm-check-item" data-on={autodetectOn} onClick={() => setAutodetectOn(v => !v)}>
-                    <span className="box"><Icon name="check" size={9} /></span>Auto-detect
-                  </button>
-                </div>
-
-                {/* Clone/Heal need a source point before they do anything at all, and nothing on
-                    the canvas says so — this states the step you're on and offers a reset. */}
-                {(tool === 'clone' || tool === 'heal') && (
-                  <React.Fragment>
-                    <div className="cm-grp" style={{ marginTop: 16 }}>{tool === 'heal' ? 'Healing brush' : 'Clone stamp'}</div>
-                    <div className="cm-note" style={{ marginTop: 6 }}>
-                      {cloneSrc
-                        ? `Source set at ${Math.round(cloneSrc.x)}, ${Math.round(cloneSrc.y)} — now paint to ${tool === 'heal' ? 'heal with' : 'stamp'} those pixels.`
-                        : 'Step 1 — hold ⌥ (Alt) or ⇧ (Shift) and click the area you want to copy FROM.'}
-                    </div>
-                    <button className="cm-btn" style={{ marginTop: 8, width: '100%', justifyContent: 'center' }}
-                      disabled={!cloneSrc} onClick={() => ed().clearCloneSource()}>
-                      Reset source
-                    </button>
-                    <div className="cm-note" style={{ marginTop: 8 }}>⌥-click or ⇧-click re-sources at any time</div>
-                  </React.Fragment>
-                )}
-
-                {/* Destructive-vs-new-layer, for every pixel tool: by default strokes edit the
-                    image itself (at its own resolution), which is what a photo editor does. */}
-                {isPaintTool && (
-                  <React.Fragment>
-                    <div className="cm-grp" style={{ marginTop: 16 }}>Destination</div>
-                    <button className="cm-check-item" data-on={!!opts.paintNewLayer} style={{ marginTop: 6 }}
-                      onClick={() => ed().setToolOptions({ paintNewLayer: !opts.paintNewLayer })}>
-                      <span className="box"><Icon name="check" size={9} /></span>Paint on a new layer
-                    </button>
-                    <div className="cm-note" style={{ marginTop: 6 }}>
-                      {opts.paintNewLayer
-                        ? 'Strokes go to a separate paint layer — the original image is left untouched.'
-                        : 'Editing the image itself (the selected layer, or the top image), at its own resolution.'}
-                    </div>
-                  </React.Fragment>
-                )}
-
-                {/* Brush/Color section — only the sliders+swatches a given tool can actually read
-                    (see COLOR_TOOLS/isPaintTool below), moved out of the always-visible header. */}
-                {isColorTool && (
-                  <React.Fragment>
-                    <div className="cm-grp" style={{ marginTop: 16 }}>{isPaintTool ? 'Brush' : 'Color'}</div>
-                    {isPaintTool && (
-                      <React.Fragment>
-                        <div className="cm-slider-row">Size <input type="range" min="2" max="220" value={opts.size} onChange={e => ed().setToolOptions({ size: +e.target.value })} /><span className="cm-tag mono">{opts.size}</span></div>
-                        {/* "Soft" is the inverse of the engine's hardness (0 hardness = fully soft
-                            edge) — same knob, flipped so the UI reads as "how soft" not "how hard". */}
-                        <div className="cm-slider-row" style={{ marginTop: 6 }}>Soft <input type="range" min="0" max="100" value={Math.round((1 - opts.hardness) * 100)} onChange={e => ed().setToolOptions({ hardness: 1 - (+e.target.value / 100) })} /><span className="cm-tag mono">{Math.round((1 - opts.hardness) * 100)}%</span></div>
-                        <div className="cm-slider-row" style={{ marginTop: 6 }}>Opacity <input type="range" min="5" max="100" value={Math.round(opts.opacity * 100)} onChange={e => ed().setToolOptions({ opacity: +e.target.value / 100 })} /><span className="cm-tag mono">{Math.round(opts.opacity * 100)}%</span></div>
-                      </React.Fragment>
-                    )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-                      <input type="color" value={opts.color} onChange={e => ed().setToolOptions({ color: e.target.value, fill: e.target.value })} title="Colour" />
-                      <div style={{ display: 'flex', gap: 6, flex: 1 }}>
-                        {BRUSH_SWATCHES.map(c => (
-                          <button key={c} className="cm-swatch-btn" data-on={c.toLowerCase() === (opts.color || '').toLowerCase()}
-                            style={{ background: c }} title={c}
-                            onClick={() => ed().setToolOptions({ color: c, fill: c })} />
-                        ))}
-                      </div>
-                    </div>
-                  </React.Fragment>
-                )}
-
-                {tool === 'magicwand' && (
-                  <React.Fragment>
-                    <div className="cm-note" style={{ marginTop: 8 }}>
-                      {objselectBusy ? 'Finding object…'
-                        : selCount > 1 ? selCount + ' selected · ⇧-click (or Add) to keep combining'
-                        : selCount === 1 ? 'Selected · ⇧-click to add more, ⌥-click to subtract'
-                        : 'Click an object to select it'}
-                    </div>
-                    <button className="cm-toggle" data-on={opts.addMode} style={{ marginTop: 8 }}
-                      onClick={() => ed().setToolOptions({ addMode: !opts.addMode })}>
-                      Add{opts.addMode ? ' ✓' : ''}
-                    </button>
-                    <label style={{ display: 'block', marginTop: 8, fontSize: 11, color: 'var(--cm-dim)' }}>Tolerance
-                      <input type="range" min="4" max="128" value={opts.tolerance} style={{ width: '100%' }}
-                        onChange={e => ed().setToolOptions({ tolerance: +e.target.value })} />
-                    </label>
-                    <div className="cm-note" style={{ marginTop: 8 }}>⇧ add · ⌥ subtract · [ ] tolerance</div>
-                  </React.Fragment>
-                )}
-                {(tool === 'objectselect' || tool === 'hoverselect') && (
-                  <React.Fragment>
-                    <div className="cm-row" style={{ alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                      <span style={{ fontWeight: 600 }}>{tool === 'hoverselect' ? 'Hover select' : 'Object select'}</span>
-                      <button className="cm-toggle" data-on={opts.addMode}
-                        title="Keep adding each clicked object to the selection (same as holding Shift)"
-                        onClick={() => ed().setToolOptions({ addMode: !opts.addMode })}>
-                        Add{opts.addMode ? ' ✓' : ''}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                  {detectResults.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 4 }}>
+                      <button className="cm-btn" style={{ flex: 1, minWidth: 0 }} onClick={() => selectDetected(b)}>
+                        <Icon name="objectselect" size={13} /> Subject {i + 1}<span className="cm-tag mono" style={{ marginLeft: 'auto' }}>{Math.round(b.w)}×{Math.round(b.h)}</span>
                       </button>
+                      <button className="cm-btn" title={`Make Subject ${i + 1} its own layer`} disabled={!!cardBusy} onClick={() => detectedToLayers([b])}><Icon name="layerstab" size={13} /></button>
                     </div>
-                    <div className="cm-note" style={{ marginTop: 6 }}>
-                      {objselectBusy ? 'Finding object…'
-                        : selCount > 1 ? selCount + ' selected · Merge to combine'
-                        : objCount ? objCount + (tool === 'hoverselect' ? ' objects · hover to preview, click to select' : ' objects · click to select')
-                        : 'No objects found — re-detect'}
-                    </div>
-                    <label style={{ display: 'block', marginTop: 8, fontSize: 11, color: 'var(--cm-dim)' }}
-                      title="How close in colour a pixel must be to the clicked spot to seed the object. Higher = grabs more of the colour before the object is completed.">
-                      Colour match
-                      <input type="range" min="4" max="96" value={opts.tolerance} style={{ width: '100%' }}
-                        onChange={e => ed().setToolOptions({ tolerance: +e.target.value })} />
-                    </label>
-                    <div className="cm-row" style={{ marginTop: 8 }}>
-                      <button className="cm-btn" style={{ width: '100%', justifyContent: 'center' }} disabled={objselectBusy || selCount < 2}
-                        title="Select 2+ objects (⇧-click or the Add toggle), then merge them into one shape via polygon clipping"
-                        onClick={mergeSel}>Merge{selCount > 1 ? ' (' + selCount + ')' : ''}</button>
-                    </div>
-                    <div className="cm-row" style={{ marginTop: 6 }}>
-                      <button className="cm-btn" disabled={objselectBusy || !selCount} onClick={expandSel}>Expand</button>
-                      <button className="cm-btn" disabled={objselectBusy || !selCount} onClick={contractSel}>Contract</button>
-                    </div>
-                    <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
-                      disabled={objselectBusy} title="Select every region on the canvas matching the colour you last clicked, within Colour match"
-                      onClick={selectSimilar}>Similar</button>
-                    {!!selCount && (
-                      <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
-                        onClick={() => ed().clearSelection()}>Deselect</button>
-                    )}
-                    <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}
-                      disabled={objselectBusy} onClick={redetectObjects}>Re-detect</button>
-                    <div className="cm-note" style={{ marginTop: 8 }}>⇧ add · ⌥ subtract · [ ] tolerance · re-click cycles nested</div>
-                  </React.Fragment>
-                )}
-
-                {tool === 'gradient' && (
-                  <React.Fragment>
-                    <div className="cm-grp" style={{ marginTop: 16 }}>Gradient</div>
-                    <div className="cm-row">
-                      <button className="cm-btn" data-on={opts.gradientType === 'linear'} onClick={() => ed().setToolOptions({ gradientType: 'linear' })}>Linear</button>
-                      <button className="cm-btn" data-on={opts.gradientType === 'radial'} onClick={() => ed().setToolOptions({ gradientType: 'radial' })}>Radial</button>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-                      {opts.gradientStops.map((stop, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <input type="color" value={stop.color} onChange={e => {
-                            const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, color: e.target.value } : s);
-                            ed().setToolOptions({ gradientStops: stops });
-                          }} />
-                          <input type="range" min="0" max="1" step="0.01" value={stop.offset} style={{ flex: 1 }} title="Position" onChange={e => {
-                            const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, offset: +e.target.value } : s);
-                            ed().setToolOptions({ gradientStops: stops });
-                          }} />
-                          <input type="range" min="0" max="1" step="0.01" value={stop.alpha ?? 1} style={{ flex: 1 }} title="Opacity" onChange={e => {
-                            const stops = opts.gradientStops.map((s, si) => si === i ? { ...s, alpha: +e.target.value } : s);
-                            ed().setToolOptions({ gradientStops: stops });
-                          }} />
-                          <button className="cm-icon-btn" disabled={opts.gradientStops.length <= 2} title="Remove stop"
-                            onClick={() => ed().setToolOptions({ gradientStops: opts.gradientStops.filter((_, si) => si !== i) })}>
-                            <Icon name="close" size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="cm-row" style={{ marginTop: 6 }}>
-                      <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => {
-                        const last = opts.gradientStops[opts.gradientStops.length - 1];
-                        ed().setToolOptions({ gradientStops: [...opts.gradientStops, { offset: Math.min(1, last?.offset ?? 1), color: last?.color || '#ffffff', alpha: last?.alpha ?? 1 }] });
-                      }}>+ Add stop</button>
-                      <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} title="Reverse stop order"
-                        onClick={() => ed().setToolOptions({ gradientStops: opts.gradientStops.map(s => ({ ...s, offset: 1 - s.offset })).sort((a, b) => a.offset - b.offset) })}>
-                        <Icon name="flip" size={13} /> Reverse
-                      </button>
-                    </div>
-                  </React.Fragment>
-                )}
-
-                {/* Transform: Duplicate + a combined Flip H/V button (plain click flips
-                    horizontal, shift-click flips vertical) — canvas alignment moved to the
-                    Properties panel (right side, next to Stacking) since it acts on the current
-                    selection, same family as Stacking/Group-Ungroup. */}
-                <div className="cm-grp">Transform</div>
-                <div className="cm-row">
-                  <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} disabled={!activeLayer} onClick={duplicate}>
-                    <Icon name="duplicate" size={13} /> Duplicate
-                  </button>
-                  <button className="cm-btn" style={{ flex: 1, justifyContent: 'center' }} disabled={!activeLayer}
-                    title="Flip horizontal — shift-click to flip vertical"
-                    onClick={e => ed().flipLayer(e.shiftKey ? 'y' : 'x')}>
-                    <Icon name="flip" size={13} /> Flip H / V
-                  </button>
+                  ))}
                 </div>
-
-                {/* AI Vision Engine card — badged "v3.4", with a glowing accent-bordered
-                    "Auto-Detect Subjects" button wrapping the existing detect-objects action. */}
-                <div className="cm-grp" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Icon name="spark" size={13} style={{ color: 'var(--cm-accent)' }} />AI Vision Engine
-                  <span className="cm-tag mono" style={{ marginLeft: 'auto' }}>v3.4</span>
-                </div>
-                <button className="cm-ai-detect-btn" onClick={detectObjects}>
-                  <Icon name="wand" size={13} /> Auto-Detect Subjects
-                </button>
                 {detectResults.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 6 }}>
-                    {detectResults.map((b, i) => (
-                      <button key={i} className="cm-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => selectDetected(b)}>
-                        <Icon name="objectselect" size={13} /> Object {i + 1}
-                      </button>
-                    ))}
-                  </div>
+                  <button className="cm-btn cm-btn-accent" style={{ width: '100%', marginTop: 8 }} data-busy={cardBusy === 'tolayers'} disabled={!!cardBusy} onClick={() => detectedToLayers(detectResults)}>
+                    {cardBusy === 'tolayers' ? <><span className="cm-btn-spin" />Creating layers…</> : <><Icon name="layerstab" size={13} /> Create layers from {detectResults.length === 1 ? 'subject' : `all ${detectResults.length} subjects`}</>}
+                  </button>
                 )}
-
-                <div className="cm-grp">Selection modifiers</div>
-                <div className="cm-row">
-                  <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={expandSel}><Icon name="expand" size={13} /> Expand</button>
-                  <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={contractSel}><Icon name="contract" size={13} /> Contract</button>
-                </div>
-                <button className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center' }} disabled={!props.hasSelectionPixels} onClick={selectSimilar}>
-                  <Icon name="similar" size={13} /> Select Similar Colors
+                <div className="cm-grp">Engine</div>
+                <div className="cm-lp-engine"><span>Selection &amp; cutout</span><span className="cm-tag mono">Local CV</span></div>
+                <div className="cm-lp-engine"><span>Generative AI</span><span className="cm-tag mono">{aiKeyed ? 'Gemini' : 'No key'}</span></div>
+                <div className="cm-note">Remove BG runs locally unless an AI key is set in the AI tab — either way it writes a layer mask you can refine with the brush.</div>
+              </div>
+            )}
+            <div className="cm-lp-card">
+              <div className="cm-lp-card-head"><Icon name="spark" size={13} style={{ color: 'var(--cm-accent)' }} />AI Vision Engine v3.4<span className="cm-lp-status" data-on={aiKeyed}>{aiKeyed ? 'Neural On' : 'Local'}</span></div>
+              <button className="cm-ai-detect-btn" data-busy={cardBusy === 'detect'} disabled={!!cardBusy} onClick={detectObjects}>
+                {cardBusy === 'detect' ? <><span className="cm-btn-spin" />Detecting…</> : <><Icon name="wand" size={13} /> Auto-Detect Subjects</>}
+              </button>
+              <div className="cm-lp-card-row">
+                <button className="cm-btn" data-busy={cardBusy === 'removebg'} title="Cut the subject out of the selected image (as a layer mask)"
+                  disabled={!!cardBusy || !(activeLayer && (activeLayer.kind === 'image' || activeLayer.kind === 'paint') && !activeLayer.isAdjustment)} onClick={() => removeBg()}>
+                  {cardBusy === 'removebg' ? <><span className="cm-btn-spin" />Cutting out…</> : <><Icon name="scissors" size={13} /> Remove BG</>}
                 </button>
-                <label className="cm-btn" style={{ marginTop: 6, width: '100%', justifyContent: 'center', opacity: props.hasSelectionPixels ? 1 : 0.4, pointerEvents: props.hasSelectionPixels ? 'auto' : 'none' }}>
-                  <Icon name="eyedropper" size={13} /> Recolor selection…
-                  <input type="color" style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
-                    onChange={e => recolorSel(e.target.value)} />
-                </label>
-                <div className="cm-row" style={{ marginTop: 6 }}>
-                  <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={clipToSel}><Icon name="crop" size={13} /> Clip layer to selection</button>
-                  <button className="cm-btn" disabled={!props.hasSelectionPixels} onClick={clearClip}><Icon name="close" size={13} /> Clear clip</button>
+                <button className="cm-btn" data-on={!!(activeLayer && activeLayer.hasShadow)} title="Toggle a soft drop shadow on the selected layer"
+                  disabled={!!cardBusy || !(activeLayer && activeLayer.role !== 'bg' && !activeLayer.isAdjustment)} onClick={autoShadow}>
+                  <Icon name="sun" size={13} /> Auto Shadow
+                </button>
+              </div>
+              {/* with an AI key Remove BG uses the AI; this keeps the free offline cut-out one click away */}
+              {aiKeyed && (
+                <div className="cm-lp-card-row">
+                  <button className="cm-btn" data-busy={cardBusy === 'removebg-local'} title="Cut the subject out offline, without the AI (as a layer mask you can touch up)"
+                    disabled={!!cardBusy || !(activeLayer && (activeLayer.kind === 'image' || activeLayer.kind === 'paint') && !activeLayer.isAdjustment)} onClick={() => removeBg('local')}>
+                    {cardBusy === 'removebg-local' ? <><span className="cm-btn-spin" />Cutting out…</> : <><Icon name="scissors" size={13} /> Remove BG offline</>}
+                  </button>
                 </div>
-                {selMsg && <div className="cm-note">{selMsg}</div>}
+              )}
+              {cardMsg && <div className="cm-note" style={{ marginTop: 6 }}>{cardMsg}</div>}
+            </div>
           </div>
         )}
+        <ScrollCue within={leftRef} />
       </div>
       {toasts.length > 0 && (
         <div className="cm-toast-wrap" aria-live="polite">
@@ -2436,7 +3317,26 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
         onDragEnter={onStageDragEnter} onDragLeave={onStageDragLeave}
         onDragOver={onStageDragOver} onDrop={(e) => { setDropDepth(0); setDropping(false); onStageDrop(e); }}>
         <canvas ref={canvasRef} />
-        {showExtendBanner && (
+        {perspActive && (
+          <div className="cm-persp-bar" role="toolbar" aria-label="Perspective correction">
+            <Icon name="perspective" size={14} />
+            <span style={{ whiteSpace: 'nowrap' }}>Drag the corners onto edges that should be square</span>
+            <button className="cm-btn cm-persp-apply" onClick={() => ed().applyPerspectiveEdit()}>Apply</button>
+            <button className="cm-btn" onClick={() => ed().resetPerspectiveCorners()}>Reset</button>
+            <button className="cm-btn" onClick={() => ed().cancelPerspectiveEdit()}>Cancel</button>
+          </div>
+        )}
+        {pathEditing && !perspActive && (
+          <div className="cm-persp-bar cm-path-bar" role="toolbar" aria-label="Edit path">
+            <span style={{ display: 'flex', flexShrink: 0 }}><Icon name="pen" size={14} /></span>
+            <span className="cm-path-bar-hint" style={{ whiteSpace: 'nowrap' }}>Drag points &amp; handles · double-click to add / convert · ⌘-drag bends</span>
+            <button className="cm-btn" title="Make the selected points smooth" onClick={() => ed().setPathNodeType('smooth')}>Smooth</button>
+            <button className="cm-btn" title="Make the selected points sharp corners" onClick={() => ed().setPathNodeType('corner')}>Corner</button>
+            <button className="cm-btn" title="Delete the selected points (⌫)" onClick={() => ed().deleteSelectedPathNodes()}>Delete point</button>
+            <button className="cm-btn cm-persp-apply" title="Leave edit mode (Enter)" onClick={() => ed().exitPathEdit()}>Done</button>
+          </div>
+        )}
+        {showExtendBanner && !perspActive && !pathEditing && (
           <button className="cm-extend-banner" onClick={onExtendBannerClick}>
             <Icon name="search" size={13} />Background doesn't fill the canvas — AI-extend it
           </button>
@@ -2492,7 +3392,7 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
       <button className="cm-collapse" data-flip={sideCollapsed} title={sideCollapsed ? 'Show panel' : 'Hide panel'} onClick={() => setSideCollapsed(s => !s)}>
         <Icon name="chevron" size={13} />
       </button>
-      <div className="cm-side">
+      <div className="cm-side" ref={sideRef}>
         {!sideCollapsed && reviewOn && (() => {
           const ar = activeRegion();
           const polyRegionCount = regionObjects().filter(o => o.type === 'polygon').length;
@@ -2504,17 +3404,18 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
             ['polylasso', 'polygon', 'Polygon'], ['maglasso', 'wand', 'Magnetic'],
           ];
           const BG_MODE_NOTE = {
-            auto: 'Local silhouette cutout via edge/colour segmentation — same engine as Object select.',
-            cheap: 'Faster — lower-resolution local cutout, good for small/medium objects.',
-            best: 'Same local cutout engine, run at a higher resolution for a cleaner edge (slower).',
+            auto: 'Local cutout + background fill; with an AI key, the AI also repaints the filled areas.',
+            cheap: 'Local only — lower-resolution cutout and fill, fast and free (no AI call).',
+            best: 'Higher-resolution cutout for cleaner edges, plus AI background repaint when a key is set (slowest).',
           };
           return (
-            <React.Fragment>
+            <div className="cm-side-body cm-scroll">
               <div className="cm-review-head">
                 <span className="cm-row" style={{ gap: 6, fontWeight: 700, fontSize: 13 }}><Icon name="layers" size={15} style={{ color: 'var(--cm-accent)' }} />Review regions</span>
                 <span className="cm-tag" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 10.5 }}>{n} {n === 1 ? 'box' : 'boxes'}</span>
               </div>
               <div className="cm-review-panel-body">
+                {convertMsg && regionDraw !== 'object' && <div className="cm-note" style={{ margin: 0, color: 'var(--cm-accent)' }}>{convertMsg}</div>}
                 <button className="cm-btn" style={{ width: '100%', justifyContent: 'flex-start' }} disabled={autodetectBusy} onClick={autoDetectRegions}>
                   {autodetectBusy ? <React.Fragment><span className="cm-btn-spin" />Detecting…</React.Fragment> : <React.Fragment><Icon name="spark" size={13} />Auto-detect all objects</React.Fragment>}
                 </button>
@@ -2600,25 +3501,28 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                     : <React.Fragment><Icon name="wand" size={13} />Create {n} layer{n === 1 ? '' : 's'}</React.Fragment>}
                 </button>
               </div>
-            </React.Fragment>
+            </div>
           );
         })()}
         {!sideCollapsed && !reviewOn && (
           <React.Fragment>
             <div className="cm-tabs">
-              <button data-on={sideTab === 'layer'} onClick={() => setSideTab('layer')}><Icon name="tool" size={13} /> Properties</button>
-              <button data-on={sideTab === 'design'} onClick={() => setSideTab('design')}><Icon name="palette" size={13} /> Design</button>
-              <button data-on={sideTab === 'stickers'} onClick={() => setSideTab('stickers')}><Icon name="star" size={13} /> Stickers</button>
-              <button data-on={sideTab === 'ai'} onClick={() => setSideTab('ai')}><Icon name="spark" size={13} /> AI</button>
+              <button data-on={sideTab === 'layer'} onClick={() => setSideTab('layer')}>Properties</button>
+              <button data-on={sideTab === 'design'} onClick={() => setSideTab('design')}>Design</button>
+              <button data-on={sideTab === 'stickers'} onClick={() => setSideTab('stickers')}>Stickers</button>
+              <button className="cm-tab-ai" data-on={sideTab === 'ai'} onClick={() => setSideTab('ai')}>AI Assist<span className="cm-tab-dot" aria-hidden="true" /></button>
             </div>
+            <div className="cm-side-body cm-scroll">
 
             {sideTab === 'layer' && (
               <div>
+                {toolDock}
+                <CanvasSection editor={ed} info={canvasInfo} />
 
-                {!props.active ? (
+                {!props.active ? (dockOpen ? null : (
                   <React.Fragment>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 10 }}>
-                      <strong style={{ fontSize: 13 }}>Properties</strong>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <strong className="cm-props-title">Properties</strong>
                     </div>
                     <div className="cm-props-empty">
                       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 15l4-4 4 4 4-6 4 4" /></svg>
@@ -2626,23 +3530,26 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                       <span className="d">Select a layer above, or on the canvas, to see and edit its properties.</span>
                     </div>
                   </React.Fragment>
-                ) : (
+                )) : (
                   <React.Fragment>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, marginBottom: 4 }}>
-                      <strong>{props.title}</strong>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <strong className="cm-props-title">{props.title}</strong>
                     </div>
 
                     <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>Stacking</div>
                     <div className="cm-row">
-                      <button className="cm-icon-btn" title="Bring to front" style={{ width: 'auto', flex: 1 }} onClick={() => stack('top')}><Icon name="chevronD" size={14} style={{ transform: 'rotate(180deg)' }} /></button>
-                      <button className="cm-icon-btn" title="Bring forward" style={{ width: 'auto', flex: 1 }} onClick={() => stack('up')}><Icon name="chevron" size={14} style={{ transform: 'rotate(90deg)' }} /></button>
-                      <button className="cm-icon-btn" title="Send backward" style={{ width: 'auto', flex: 1 }} onClick={() => stack('down')}><Icon name="chevron" size={14} style={{ transform: 'rotate(-90deg)' }} /></button>
-                      <button className="cm-icon-btn" title="Send to back" style={{ width: 'auto', flex: 1 }} onClick={() => stack('bottom')}><Icon name="chevronD" size={14} /></button>
+                      <button className="cm-icon-btn" title="Bring to front" style={{ width: 'auto', flex: 1 }} onClick={() => stack('top')}><Icon name="stackfront" size={15} /></button>
+                      <button className="cm-icon-btn" title="Bring forward" style={{ width: 'auto', flex: 1 }} onClick={() => stack('up')}><Icon name="stackup" size={15} /></button>
+                      <button className="cm-icon-btn" title="Send backward" style={{ width: 'auto', flex: 1 }} onClick={() => stack('down')}><Icon name="stackdown" size={15} /></button>
+                      <button className="cm-icon-btn" title="Send to back" style={{ width: 'auto', flex: 1 }} onClick={() => stack('bottom')}><Icon name="stackback" size={15} /></button>
                     </div>
-                    <div className="cm-row" style={{ marginTop: 6 }}>
-                      <button className="cm-btn" disabled={!props.canGroup} onClick={groupSel}><Icon name="box" size={13} /> Group</button>
-                      <button className="cm-btn" disabled={!props.canUngroup} onClick={ungroupSel}><Icon name="grid" size={13} /> Ungroup</button>
-                    </div>
+                    {/* Only the action that applies is shown (none on a plain single layer), like the demo. */}
+                    {(props.canGroup || props.canUngroup) && (
+                      <div className="cm-row" style={{ marginTop: 6 }}>
+                        {props.canGroup && <button className="cm-btn" onClick={groupSel}><Icon name="box" size={13} /> Group</button>}
+                        {props.canUngroup && <button className="cm-btn" onClick={ungroupSel}><Icon name="grid" size={13} /> Ungroup</button>}
+                      </div>
+                    )}
 
                     <div className="cm-grp">Canvas alignment</div>
                     <div className="cm-align">
@@ -2660,29 +3567,62 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                       <React.Fragment>
                         <div className="cm-grp">{props.isAdjustment ? 'Adjustment layer' : 'Adjust'}</div>
                         {props.isAdjustment && <div className="cm-note" style={{ marginTop: 0 }}>Affects every layer below this one in the stack.</div>}
-                        <div className="cm-slider-row"><Icon name="sun" size={13} /> Brightness <input type="range" min="50" max="150" value={props.fx.brightness} onChange={e => setAdjust({ brightness: +e.target.value })} /></div>
-                        <div className="cm-slider-row"><Icon name="contrast" size={13} /> Contrast <input type="range" min="50" max="150" value={props.fx.contrast} onChange={e => setAdjust({ contrast: +e.target.value })} /></div>
-                        <div className="cm-slider-row"><Icon name="droplet" size={13} /> Saturation <input type="range" min="0" max="200" value={props.fx.saturate} onChange={e => setAdjust({ saturate: +e.target.value })} /></div>
-                        <div className="cm-slider-row"><Icon name="blurfilter" size={13} /> Blur <input type="range" min="0" max="12" step="0.5" value={props.fx.blur} onChange={e => setAdjust({ blur: +e.target.value })} /></div>
-                        <div className="cm-slider-row"><Icon name="hue" size={13} /> Hue <input type="range" min="-180" max="180" value={props.fx.hue} onChange={e => setAdjust({ hue: +e.target.value })} /></div>
-                        <div className="cm-slider-row"><Icon name="vibrance" size={13} /> Vibrance <input type="range" min="-100" max="100" value={props.fx.vibrance} onChange={e => setAdjust({ vibrance: +e.target.value })} /></div>
-                        <label className="cm-slider-row" style={{ cursor: 'pointer' }}>
+                        {ADJUST_CONTROLS.map((c, i) => (
+                          <React.Fragment key={c.key}>
+                            {c.group !== (ADJUST_CONTROLS[i - 1] || {}).group && <div className="cm-subgrp">{c.group}</div>}
+                            <div className="cm-adj-row" title={c.label + ' — double-click to reset'} onDoubleClick={() => setAdjust({ [c.key]: FX_DEFAULTS[c.key] })}>
+                              <Icon name={c.icon} size={13} />
+                              <span className="lbl">{c.label}</span>
+                              <input type="range" aria-label={c.label} min={c.min} max={c.max} step={c.step} value={props.fx[c.key]}
+                                style={c.track ? { '--cm-track': c.track } : undefined}
+                                onChange={e => setAdjust({ [c.key]: +e.target.value }, true)} onPointerUp={commitAdjust} onKeyUp={commitAdjust} />
+                              <span className={'val' + (props.fx[c.key] === FX_DEFAULTS[c.key] ? ' dim' : '')}>{formatAdjustValue(c.key, props.fx[c.key])}</span>
+                            </div>
+                          </React.Fragment>
+                        ))}
+                        <button className="cm-disclose" aria-expanded={showCurves} onClick={() => setShowCurves(v => !v)}>
+                          <Icon name="chevronD" size={12} style={{ transform: showCurves ? 'none' : 'rotate(-90deg)' }} /> Curves
+                          {props.fx.curves && <span className="dot" title="Curves active" />}
+                        </button>
+                        {showCurves && <CurvesEditor curves={props.fx.curves} histogram={histogram}
+                          onChange={(curves, live) => setAdjust({ curves }, live)} onCommit={commitAdjust} />}
+                        <button className="cm-disclose" aria-expanded={showHsl} onClick={() => setShowHsl(v => !v)}>
+                          <Icon name="chevronD" size={12} style={{ transform: showHsl ? 'none' : 'rotate(-90deg)' }} /> Color mixer (HSL)
+                          {props.fx.hsl && <span className="dot" title="Color mixer active" />}
+                        </button>
+                        {showHsl && <HslMixer hsl={props.fx.hsl} onChange={(hsl, live) => setAdjust({ hsl }, live)} onCommit={commitAdjust} />}
+                        <label className="cm-adj-check-row">
                           <Icon name="invert" size={13} /> Invert
-                          <input type="checkbox" checked={!!props.fx.invert} onChange={e => setAdjust({ invert: e.target.checked })} style={{ marginLeft: 'auto' }} />
+                          <input type="checkbox" className="cm-adj-check" checked={!!props.fx.invert} onChange={e => setAdjust({ invert: e.target.checked })} />
                         </label>
+                        <button className="cm-btn cm-adj-reset" onClick={() => setAdjust({ ...FX_DEFAULTS })}>
+                          <Icon name="reset" size={13} /> Reset adjustments
+                        </button>
+                        {props.isImage && !props.isAdjustment && (
+                          <React.Fragment>
+                            <div className="cm-grp">Geometry</div>
+                            {GEOMETRY_CONTROLS.map(c => (
+                              <div key={c.key} className="cm-adj-row" title={c.label + ' — double-click to reset'} onDoubleClick={() => setGeom({ [c.key]: 0 })}>
+                                <Icon name={c.icon} size={13} />
+                                <span className="lbl">{c.label}</span>
+                                <input type="range" aria-label={c.label} min={c.min} max={c.max} step={c.step} value={props.geom[c.key]} disabled={perspActive}
+                                  onChange={e => setGeom({ [c.key]: +e.target.value }, true)} onPointerUp={commitGeom} onKeyUp={commitGeom} />
+                                <span className={'val' + (props.geom[c.key] ? '' : ' dim')}>{formatGeometryValue(c.key, props.geom[c.key])}</span>
+                              </div>
+                            ))}
+                            <div className="cm-row" style={{ marginTop: 10 }}>
+                              <button className="cm-btn" onClick={() => ed().enterPerspectiveEdit()}><Icon name="perspective" size={13} /> 4-corner perspective{props.geom.quad ? ' ●' : ''}</button>
+                              <button className="cm-btn" style={{ flex: '0 0 auto' }} title="Reset geometry" onClick={() => setGeom({ ...GEOMETRY_DEFAULTS })}><Icon name="reset" size={13} /></button>
+                            </div>
+                          </React.Fragment>
+                        )}
                       </React.Fragment>
                     )}
 
                     {props.text && (
                       <React.Fragment>
                         <div className="cm-grp">Typography</div>
-                        <select className="cm-select" value={props.text.fontFamily} onChange={e => setText({ fontFamily: e.target.value })}>
-                          {FONT_GROUPS.map(g => (
-                            <optgroup key={g.label} label={g.label}>
-                              {g.fonts.map(([label, value]) => <option key={value} value={value}>{label}</option>)}
-                            </optgroup>
-                          ))}
-                        </select>
+                        <FontPicker value={props.text.fontFamily} onPick={v => setText({ fontFamily: v })} />
                         <div className="cm-field-grid">
                           <label className="cm-field">Size <input type="number" min="1" max="800" value={props.text.fontSize} onChange={e => setText({ fontSize: Math.max(1, +e.target.value) })} /></label>
                           <label className="cm-field">Weight
@@ -2708,20 +3648,25 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                     {props.hasFill && (
                       <React.Fragment>
                         <div className="cm-grp">Fill</div>
-                        <div className="cm-row">
+                        <div className="cm-seg">
                           <button className="cm-btn" data-on={!props.shapeGradient} onClick={setSolidFillMode}>Solid</button>
                           <button className="cm-btn" data-on={!!props.shapeGradient} onClick={setGradientFillMode}>Gradient</button>
                         </div>
                         {!props.shapeGradient ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                          <div className="cm-swatch-row" style={{ marginTop: 8 }} data-paint-off={props.fillOff}>
                             <input type="color" value={props.fill} title="Fill colour" onChange={e => setFillColor(e.target.value)} />
-                            <span className="cm-note" style={{ margin: 0 }}>Colour of the selected shape or text.</span>
+                            <div className="cm-cv-fill">
+                              <HexField value={props.fill} label="Fill colour hex" onCommit={v => setFillColor(v)} />
+                              <span className="pct"><CommitNumber value={Math.round(props.fillAlpha * 100)} min={0} max={100} aria-label="Fill opacity" onCommit={a => setFillColor(props.fill, a / 100)} />%</span>
+                            </div>
+                            <PaintEye hidden={props.fillOff} what="fill" onToggle={show => ed().setFillVisible(show)} />
                           </div>
                         ) : (
                           <React.Fragment>
-                            <div className="cm-row" style={{ marginTop: 8 }}>
+                            <div className="cm-row" style={{ marginTop: 8 }} data-paint-off={props.fillOff}>
                               <button className="cm-btn" data-on={props.shapeGradient.type === 'linear'} onClick={() => setShapeGradientPatch({ type: 'linear' })}>Linear</button>
                               <button className="cm-btn" data-on={props.shapeGradient.type === 'radial'} onClick={() => setShapeGradientPatch({ type: 'radial' })}>Radial</button>
+                              <PaintEye hidden={props.fillOff} what="fill" onToggle={show => ed().setFillVisible(show)} />
                             </div>
                             {props.shapeGradient.type === 'linear' && (
                               <div className="cm-slider-row">Angle <input type="range" min="0" max="360" value={fgAngle} onChange={e => setShapeGradientPatch({ angle: +e.target.value })} /></div>
@@ -2766,24 +3711,74 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                     {props.hasBorder && (
                       <React.Fragment>
                         <div className="cm-grp">Border</div>
-                        <div className="cm-slider-row">Width <input type="range" min="0" max="40" value={props.strokeWidth} onChange={e => setStroke({ width: +e.target.value })} /></div>
-                        {props.strokeWidth > 0 && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                            <input type="color" value={props.stroke} title="Border colour" onChange={e => setStroke({ color: e.target.value })} />
-                            <span className="cm-note" style={{ margin: 0 }}>Colour of the border/outline.</span>
+                        {/* Colour always offered; picking one on a borderless shape also gives it a
+                            visible 2px border so the choice isn't a silent no-op (same as the demo). */}
+                        <div className="cm-swatch-row" style={{ marginBottom: 2 }} data-paint-off={props.strokeOff}>
+                          <input type="color" value={props.stroke} title="Border colour" onChange={e => setStroke(props.strokeWidth > 0 ? { color: e.target.value } : { color: e.target.value, width: 2 })} />
+                          <div className="cm-cv-fill">
+                            <HexField value={props.stroke} label="Border colour hex" onCommit={v => setStroke(props.strokeWidth > 0 ? { color: v } : { color: v, width: 2 })} />
+                            <span className="pct"><CommitNumber value={Math.round(props.strokeAlpha * 100)} min={0} max={100} aria-label="Border opacity" onCommit={a => setStroke(props.strokeWidth > 0 ? { color: props.stroke, alpha: a / 100 } : { color: props.stroke, alpha: a / 100, width: 2 })} />%</span>
                           </div>
-                        )}
+                          {/* nothing to hide on a borderless shape */}
+                          <PaintEye hidden={props.strokeOff} what="border" disabled={!props.strokeOff && !(props.strokeWidth > 0)} onToggle={show => ed().setStrokeVisible(show)} />
+                        </div>
+                        <div className="cm-field-row"><span className="cm-field-label">Width</span>
+                          <label className="cm-cv-dim cm-field-box"><CommitNumber value={Math.round(props.strokeWidth)} min={0} max={200} aria-label="Border width" onCommit={w => setStroke({ width: w })} /><span>px</span></label>
+                          {/* opens the style / align / caps / join rows below */}
+                          <button type="button" className="cm-field-icon-btn" title="Border settings" aria-label="Border settings" aria-expanded={strokeAdvOpen}
+                            onClick={() => setStrokeAdvOpen(v => !v)}><Icon name="strokeSettings" size={16} /></button>
+                        </div>
+                        {strokeAdvOpen && props.strokeOpts && (() => {
+                          const st = props.strokeOpts, on = props.strokeWidth > 0;
+                          // a borderless shape gets a visible 2px border with the option, like picking a colour does
+                          const seg = (key, opts, label) => (
+                            <div className="cm-seg cm-stroke-seg" role="group" aria-label={label}>
+                              {opts.map(([v, l]) => (
+                                <button key={v} type="button" className="cm-btn" data-on={String(st[key] === v)} aria-pressed={st[key] === v}
+                                  onClick={() => setStroke(on ? { [key]: v } : { [key]: v, width: 2 })}>{l}</button>
+                              ))}
+                            </div>
+                          );
+                          return (
+                            <React.Fragment>
+                              <div className="cm-field-row"><span className="cm-field-label">Style</span>{seg('style', STROKE_STYLES, 'Border style')}</div>
+                              {on && st.style !== 'solid' && (
+                                <div className="cm-field-row">
+                                  {/* dotted: just the gap between dots (the dot size is the width) */}
+                                  {st.style === 'dashed' && <React.Fragment>
+                                    <span className="cm-field-label">Dash</span>
+                                    <label className="cm-cv-dim cm-field-box"><CommitNumber value={Math.round(st.dash)} min={0} max={400} aria-label="Dash length" onCommit={v => setStroke({ dash: v })} /><span>px</span></label>
+                                  </React.Fragment>}
+                                  <span className="cm-field-label cm-stroke-gap-label">Gap</span>
+                                  <label className="cm-cv-dim cm-field-box"><CommitNumber value={Math.round(st.gap)} min={0} max={400} aria-label="Gap length" onCommit={v => setStroke({ gap: v })} /><span>px</span></label>
+                                </div>
+                              )}
+                              {on && st.canPosition && <div className="cm-field-row"><span className="cm-field-label">Align</span>{seg('position', STROKE_POSITIONS, 'Border position')}</div>}
+                              {/* dots are round caps by definition */}
+                              {on && st.style !== 'dotted' && <div className="cm-field-row"><span className="cm-field-label">Caps</span>{seg('cap', STROKE_CAPS, 'Border caps')}</div>}
+                              {/* no corners to join on an ellipse */}
+                              {on && !['ellipse', 'circle'].includes(props.shapeType) && <div className="cm-field-row"><span className="cm-field-label">Join</span>{seg('join', STROKE_JOINS, 'Border corners')}</div>}
+                            </React.Fragment>
+                          );
+                        })()}
                       </React.Fragment>
+                    )}
+
+                    {props.isRect && (
+                      <div>
+                        <div className="cm-grp">Corner radius</div>
+                        <div className="cm-slider-row">Radius <input type="range" min="0" max={Math.max(1, Math.round(Math.min(props.w, props.h) / 2))} value={props.rx} onChange={e => setNumeric({ rx: +e.target.value }, { live: true })} /><span className="cm-val">{props.rx}px</span></div>
+                      </div>
                     )}
 
                     <div className="cm-grp">Blend &amp; opacity</div>
                     <select className="cm-select" value={props.blend} onChange={e => setBlend(e.target.value)}>
                       {BLEND_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
-                    <div className="cm-slider-row">Opacity <input type="range" min="0" max="1" step="0.05" value={props.opacity} onChange={e => setOpacity(+e.target.value)} /></div>
+                    <div className="cm-slider-row">Opacity <input type="range" min="0" max="1" step="0.05" value={props.opacity} onChange={e => setOpacity(+e.target.value)} /><span className="cm-val">{Math.round(props.opacity * 100)}%</span></div>
 
                     <div className="cm-grp">Transform</div>
-                    <div className="cm-slider-row">Rotation <input type="range" min="0" max="360" value={props.angle} onChange={e => setNumeric({ angle: +e.target.value })} /></div>
+                    <div className="cm-slider-row">Rotation <input type="range" min="0" max="360" value={props.angle} onChange={e => setNumeric({ angle: +e.target.value })} /><span className="cm-val">{Math.round(props.angle)}°</span></div>
                     <div className="cm-field-grid">
                       <label className="cm-field">X <input type="number" value={props.x} onChange={e => setNumeric({ x: +e.target.value })} /></label>
                       <label className="cm-field">Y <input type="number" value={props.y} onChange={e => setNumeric({ y: +e.target.value })} /></label>
@@ -2792,16 +3787,13 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                       <label className="cm-field">W <input type="number" value={props.w} onChange={e => setNumeric({ w: +e.target.value })} /></label>
                       <label className="cm-field">H <input type="number" value={props.h} onChange={e => setNumeric({ h: +e.target.value })} /></label>
                     </div>
-                    {props.isRect && (
-                      <div className="cm-slider-row">Corner radius <input type="range" min="0" max={Math.max(1, Math.round(Math.min(props.w, props.h) / 2))} value={props.rx} onChange={e => setNumeric({ rx: +e.target.value })} /></div>
-                    )}
                     <div className="cm-field-grid">
                       <label className="cm-field">Skew X <input type="number" value={props.skewX} onChange={e => setNumeric({ skewX: +e.target.value })} /></label>
                       <label className="cm-field">Skew Y <input type="number" value={props.skewY} onChange={e => setNumeric({ skewY: +e.target.value })} /></label>
                     </div>
                     <div className="cm-row" style={{ marginTop: 8 }}>
                       <button className="cm-btn" onClick={() => flip('x')}><Icon name="flip" size={13} /> Flip H</button>
-                      <button className="cm-btn" onClick={() => flip('y')}><Icon name="flip" size={13} /> Flip V</button>
+                      <button className="cm-btn" onClick={() => flip('y')}><Icon name="flip" size={13} style={{ transform: 'rotate(90deg)' }} /> Flip V</button>
                     </div>
                     <div className="cm-row" style={{ marginTop: 6 }}>
                       <button className="cm-btn" onClick={centerH}><Icon name="move" size={13} /> Center H</button>
@@ -2827,40 +3819,40 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
               <div className="col" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                 <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>Background &amp; fill</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <button className="cm-btn" onClick={extendBackground}><Icon name="expand" size={13} />Extend background to canvas</button>
-                  <button className="cm-btn" disabled={designBusy} onClick={aiExtendBackground}>
-                    <Icon name="spark" size={13} />{designBusy ? 'Extending…' : 'AI extend background'}
+                  <button className="cm-btn" style={{ width: '100%' }} onClick={extendBackground}><Icon name="expand" size={13} /><span>Extend background to canvas</span></button>
+                  <button className="cm-btn" style={{ width: '100%' }} disabled={designBusy} onClick={aiExtendBackground}>
+                    {designBusy ? <><span className="cm-btn-spin" /><span>Extending…</span></> : <><Icon name="spark" size={13} /><span>AI extend background</span></>}
                   </button>
-                  <label className="cm-btn" style={{ position: 'relative' }}>
-                    <Icon name="bucket" size={13} />Fill {props.hasSelectionPixels ? 'selection' : 'canvas'} with colour
+                  <label className="cm-btn" style={{ width: '100%', position: 'relative' }}>
+                    <Icon name="bucket" size={13} /><span>Fill {props.hasSelectionPixels ? 'selection' : 'canvas'} with colour</span>
                     <input type="color" style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }} onChange={e => fillWithColor(e.target.value)} />
                   </label>
-                  <button className="cm-btn" onClick={fillWithImagePick}><Icon name="box" size={13} />Fill {props.hasSelectionPixels ? 'selection' : 'canvas'} with image</button>
-                  <span className="cm-note" style={{ marginTop: 0 }}>Tip: pick the marquee / lasso tool (Tool tab) to target a region first.</span>
-                  {designMsg && <div className="cm-note">{designMsg}</div>}
+                  <button className="cm-btn" style={{ width: '100%' }} onClick={fillWithImagePick}><Icon name="folder" size={13} /><span>Fill {props.hasSelectionPixels ? 'selection' : 'canvas'} with image</span></button>
                 </div>
+                <div className="cm-note">{designMsg}</div>
 
                 <div className="cm-grp">Add element</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <button className="cm-btn" onClick={() => ed().setTool('type')}><Icon name="type" size={13} />Text</button>
-                  <button className="cm-btn" onClick={() => ed().setTool('rect')}><Icon name="box" size={13} />Rectangle</button>
-                  <button className="cm-btn" onClick={() => ed().setTool('ellipse')}><Icon name="eye" size={13} />Ellipse</button>
-                  <button className="cm-btn" onClick={() => ed().setTool('line')}><Icon name="move" size={13} />Line</button>
-                  <button className="cm-btn" onClick={addImagePick}><Icon name="duplicate" size={13} />Image</button>
-                  <button className="cm-btn" onClick={() => ed().setTool('brush')}><Icon name="wand" size={13} />Brush</button>
+                {/* Text/Box/Circle drop a centred object straight away (demo #add-text/#add-box/#add-circle);
+                    Paint Layer switches to the brush. */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <button className="cm-chip" onClick={() => addCentred('text')}><Icon name="type" size={12} /><span>Text</span></button>
+                  <button className="cm-chip" onClick={() => addCentred('rect')}><Icon name="rect" size={12} /><span>Box</span></button>
+                  <button className="cm-chip" onClick={() => addCentred('ellipse')}><Icon name="hoverselect" size={12} /><span>Circle</span></button>
+                  <button className="cm-chip" onClick={addImagePick}><Icon name="image" size={12} /><span>Image</span></button>
+                  <button className="cm-chip" onClick={() => ed().setTool('brush')}><Icon name="layerstab" size={12} /><span>Paint Layer</span></button>
                 </div>
-                <div className="cm-note">Drag any layer to move · pull the handles to resize · grab the top handle to rotate.</div>
+                <div className="cm-note">Drag &amp; drop / paste an image anywhere on the canvas, or open this page with <code>?image=&lt;url&gt;</code>.</div>
 
                 <div className="cm-grp">Ad copy</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <button className="cm-btn" onClick={() => { ed().addCTA(null, { text: 'Shop now' }); ed().setTool('select'); }}><Icon name="spark" size={13} />CTA button</button>
-                  <button className="cm-btn" onClick={() => { ed().addBadge(null, { text: 'Sale' }); ed().setTool('select'); }}><Icon name="hoverselect" size={13} />Badge</button>
-                  <button className="cm-btn" onClick={() => { ed().addPrice(null, { current: '$29', original: '$40', save: 'Save 27%' }); ed().setTool('select'); }}><Icon name="box" size={13} />Price</button>
-                  <button className="cm-btn" onClick={() => { ed().addBrandLockup(null, { text: 'Brand' }); ed().setTool('select'); }}><Icon name="box" size={13} />Brand lockup</button>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <button className="cm-chip" onClick={() => { ed().addCTA(null, { text: 'Shop now' }); ed().setTool('select'); }}><Icon name="spark" size={12} /><span>CTA</span></button>
+                  <button className="cm-chip" onClick={() => { ed().addBadge(null, { text: 'Sale' }); ed().setTool('select'); }}><Icon name="hoverselect" size={12} /><span>Badge</span></button>
+                  <button className="cm-chip" onClick={() => { ed().addPrice(null, { current: '$29', original: '$40', save: 'Save 27%' }); ed().setTool('select'); }}><Icon name="tag" size={12} /><span>Price</span></button>
+                  <button className="cm-chip" onClick={() => { ed().addBrandLockup(null, { text: 'Brand' }); ed().setTool('select'); }}><Icon name="box" size={12} /><span>Brand</span></button>
                 </div>
 
                 {assets.length > 0 && (
-                  <React.Fragment>
+                  <div>
                     <div className="cm-grp">Assets · click or drag in</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                       {assets.map(a => (
@@ -2873,83 +3865,138 @@ export function CanvasmithEditor({ fabric, width = 1080, height = 1080, image = 
                         </div>
                       ))}
                     </div>
-                  </React.Fragment>
+                  </div>
                 )}
               </div>
             )}
 
             {sideTab === 'stickers' && (
               <div>
-                <p className="cm-note" style={{ marginTop: 0 }}>Click to add — it's a vector layer you can move, scale, rotate, recolour and (for text) restyle.</p>
-                {STICKER_GROUPS.map(g => (
-                  <React.Fragment key={g.label}>
-                    <div className="cm-grp">{g.label}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                      {g.keys.map(key => (
-                        <button key={key} title={key} className="cm-icon-btn" style={{ width: '100%', height: 44 }} onClick={() => ed().addSticker(key)}>
-                          <StickerPreview shapeKey={key} />
-                        </button>
-                      ))}
-                    </div>
-                  </React.Fragment>
-                ))}
+                <div className="cm-grp" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>Stickers</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  {STICKER_GROUPS.map((g, i) => (
+                    <button key={g.label} className="cm-chip" data-on={i === stickerCat} onClick={() => setStickerCat(i)}>{g.label}</button>
+                  ))}
+                </div>
+                <div className="cm-sticker-grid">
+                  {(STICKER_GROUPS[stickerCat] || STICKER_GROUPS[0]).keys.map(key => (
+                    <button key={key} title={key} className="cm-sticker-thumb" onClick={() => ed().addSticker(key)}>
+                      <StickerPreview shapeKey={key} neutral />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
             {sideTab === 'ai' && (
               <React.Fragment>
-                <div className="cm-ai-card">
-                  <div className="cm-ai-card-title"><Icon name="spark" size={15} style={{ color: 'var(--cm-accent)' }} />Magic edit</div>
-                  <p>Describe a change in plain words — Canvasmith restyles the layers.</p>
+                <div className="cm-aix-status" data-on={!needKey}>
+                  <span className="cm-aix-dot" /><b>AI</b><span className="cm-aix-badge">Free Gemini key</span>
+                  {!needKey && <button className="cm-aix-link" disabled={!!aiBusyKind} onClick={() => { ed().ai.provider().setKey(null); setNeedKey(true); }}><span>Change key</span><Icon name="chevron" size={12} /></button>}
                 </div>
                 {needKey ? (
-                  <div className="cm-note">
-                    AI runs on your own free Gemini key (Google includes free daily usage — no card).
-                    Get one at <b>aistudio.google.com/apikey</b>, then paste it:
-                    <input style={{ width: '100%', marginTop: 6 }} className="cm-ai-key" placeholder="AIza…" onKeyDown={e => { if (e.key === 'Enter') saveKey(e.target.value.trim()); }} />
+                  <div className="cm-aix-keyform">
+                    AI tools run on <b style={{ color: 'var(--cm-ink)' }}>your own free Gemini key</b> — Google gives every account free daily usage, no card.
+                    Create one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--cm-accent)' }}>aistudio.google.com/apikey</a> and paste it:
+                    <input className="cm-ai-key" style={{ marginTop: 8 }} placeholder="AIza…" onKeyDown={e => { if (e.key === 'Enter') saveKey(e.target.value.trim()); }} />
                   </div>
-                ) : (
-                  <React.Fragment>
-                    <textarea className="cm-ai-textarea" rows={3} placeholder={'e.g. "warmer accent, bigger headline" or set a headline in "quotes"'}
-                      value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} />
-                    <button className="cm-btn cm-btn-accent" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} disabled={aiBusy || !aiPrompt.trim()} onClick={runAI}>
-                      {aiBusy ? 'Working…' : <React.Fragment><Icon name="wand" size={14} />Apply magic edit</React.Fragment>}
+                ) : (() => {
+                  const busy = !!aiBusyKind;
+                  const say = (t, err) => { setAiMsg(t || ''); setAiMsgErr(!!err); };
+                  const spin = (kind, label, idle) => aiBusyKind === kind ? <><span className="cm-btn-spin" /><span>{label}</span></> : idle;
+                  const run = async (kind, fn, okMsg = 'Applied ✓ (undo to revert)') => {
+                    setAiBusyKind(kind); say('');
+                    try { const r = await fn(); say(r.status === 'ok' ? okMsg : (r.message || r.reason), r.status !== 'ok'); return r; }
+                    finally { setAiBusyKind(null); }
+                  };
+                  const preset = AI_STYLE_PRESETS.find(([n]) => n === aiPreset);
+                  const composed = [aiPrompt.trim(), preset && 'Style: ' + preset[1] + '.'].filter(Boolean).join(' ');
+                  const needText = (t) => { say(t, true); if (aiPromptRef.current) aiPromptRef.current.focus(); };
+                  const edit = () => composed ? run('edit', () => ed().aiEdit(composed, { reference: aiRef })) : needText('Describe the change first, or pick a style preset.');
+                  const enhance = async () => {
+                    if (!aiPrompt.trim()) return needText('Type a short description first — Enhance rewrites it.');
+                    const r = await run('enhance', () => ed().aiEnhancePrompt(aiPrompt.trim()), 'Description enhanced — review it, then apply.');
+                    if (r && r.status === 'ok') setAiPrompt(r.result);
+                  };
+                  const bg = () => composed ? run('bg', () => ed().aiBgSwap(composed, { reference: aiRef })) : needText('Describe the new background in the box above, then tap Replace BG.');
+                  const remove = () => props.hasSelectionPixels ? run('remove', () => ed().aiRemoveSelection()) : say('Select what to remove first — marquee, lasso, wand or object select — then tap Remove.', true);
+                  const pickRef = (e) => {
+                    const f = e.target.files && e.target.files[0]; e.target.value = '';
+                    if (!f) return;
+                    const rd = new FileReader();
+                    rd.onload = () => downscaleDataURL(rd.result).then(setAiRef, () => say('Could not read that image.', true));
+                    rd.readAsDataURL(f);
+                  };
+                  const qa = (kind, tint, icon, label, title, onClick, busyLabel) => (
+                    <button data-tint={tint} title={title} disabled={busy} onClick={onClick}>
+                      <span className="ico">{aiBusyKind === kind ? <span className="cm-btn-spin" /> : <Icon name={icon} size={16} />}</span>
+                      <span>{aiBusyKind === kind ? busyLabel : label}</span>
                     </button>
-                    {aiMsg && <div className="cm-note">{aiMsg}</div>}
-                    <h4>Try</h4>
-                    <div className="cm-ai-suggestions">
-                      {['Warmer accent colour', 'Make the headline bigger', 'Set headline to "Big sale"'].map(s => (
-                        <button key={s} className="cm-chip" onClick={() => setAiPrompt(s)}><Icon name="spark" size={11} />{s}</button>
-                      ))}
-                    </div>
+                  );
+                  return (
+                    <React.Fragment>
+                      <div className="cm-aix-h"><span>Describe change</span><span className="aside">{props.hasSelectionPixels ? 'Inside selection' : 'Whole canvas'}</span></div>
+                      <div className="cm-aix-box">
+                        <textarea ref={aiPromptRef} rows={3} placeholder="Describe what you want to change or create…" aria-label="Describe the change" disabled={busy}
+                          value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); edit(); } }} />
+                        <div className="cm-aix-foot">
+                          {aiRef ? (
+                            <span className="cm-aix-ref"><img src={aiRef} alt="" /><span>Reference</span><button title="Remove reference" aria-label="Remove reference" disabled={busy} onClick={() => setAiRef(null)}><Icon name="close" size={11} /></button></span>
+                          ) : (
+                            <button className="cm-aix-pill" title="Attach an image the AI should take cues from" disabled={busy} onClick={() => aiRefFileRef.current && aiRefFileRef.current.click()}><Icon name="plus" size={13} /><span>Attach reference</span></button>
+                          )}
+                          <button className="cm-aix-pill enhance" title="Rewrite the description into a clearer, more specific instruction" disabled={busy || !ed().ai.can('enhancePrompt')} onClick={enhance}>
+                            {spin('enhance', 'Enhancing…', <><Icon name="spark" size={13} /><span>Enhance</span></>)}
+                          </button>
+                        </div>
+                      </div>
+                      <input ref={aiRefFileRef} type="file" accept="image/*" hidden onChange={pickRef} />
+                      <button className="cm-aix-apply" disabled={busy} onClick={edit}>{spin('edit', 'Working…', 'Apply AI Edit')}</button>
+                      <div className="cm-aix-h"><span>Quick actions</span></div>
+                      <div className="cm-aix-qa">
+                        {qa('bg', 'blue', 'image', 'Replace BG', 'Replace the background with what the box above describes', bg, 'Replacing…')}
+                        {qa('extend', 'purple', 'expand', 'Expand', 'AI-fill any empty canvas around the image', () => run('extend', () => ed().aiExtendBackground()), 'Expanding…')}
+                        {qa('remove', 'teal', 'trash', 'Remove', "Erase what's inside the selection and fill it in", remove, 'Removing…')}
+                      </div>
+                      <div className="cm-aix-h"><span>Style presets</span></div>
+                      <div className="cm-aix-chips">
+                        {AI_STYLE_PRESETS.map(([name]) => (
+                          <button key={name} data-on={aiPreset === name} disabled={busy} onClick={() => setAiPreset(p => p === name ? null : name)}>{name}</button>
+                        ))}
+                      </div>
+                      {aiMsg && <div className="cm-aix-msg" data-err={aiMsgErr}>{aiMsg}</div>}
+                    </React.Fragment>
+                  );
+                })()}
 
-                    <h4>Replace background</h4>
-                    <input className="cm-ai-textarea" style={{ width: '100%' }} placeholder='e.g. "marble table, warm light"'
-                      value={aiBgPrompt} onChange={e => setAiBgPrompt(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') runAiBgSwap(); }} />
-                    <button className="cm-btn cm-btn-accent" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} disabled={aiBusy || !aiBgPrompt.trim()} onClick={runAiBgSwap}>
-                      {aiBusy ? 'Working…' : <React.Fragment><Icon name="spark" size={14} />Replace background</React.Fragment>}
-                    </button>
-                  </React.Fragment>
-                )}
-
-                <h4>Convert to layers</h4>
-                <div className="cm-ai-card">
-                  <div className="cm-ai-card-title"><Icon name="layers" size={15} style={{ color: 'var(--cm-accent)' }} />Convert to layers<span className="cm-chip" style={{ padding: '1px 7px', fontSize: 9.5 }}>guided</span></div>
-                  <p>Detects objects and shows them as boxes — adjust, add or remove any, then create editable layers.</p>
+                <div className="cm-aix-convert">
+                  <div className="cm-aix-convert-head">
+                    <span className="ico"><Icon name="layerstab" size={16} /></span>
+                    <div className="txt"><strong>Convert to layers</strong><p>Detects objects and shows them as boxes — adjust, add or remove any, then create editable layers.</p></div>
+                    <span className="cm-aix-guided">guided</span>
+                  </div>
+                  <button className="cm-aix-primary" disabled={convertBusy || reviewOn} onClick={detectAndConvert}>
+                    {convertBusy ? <><span className="cm-btn-spin" /><span>Detecting…</span></> : <React.Fragment><Icon name="layerstab" size={13} />Detect &amp; convert to layers</React.Fragment>}
+                  </button>
+                  <button className="cm-aix-secondary" disabled={convertBusy || reviewOn} onClick={selectOneManually}>
+                    <Icon name="lasso" size={13} />Select one object manually
+                  </button>
+                  {convertMsg && <div className="cm-note" style={{ color: 'var(--cm-accent)' }}>{convertMsg}</div>}
+                  <div className="cm-aix-note">Auto-detect everything, or draw one box yourself — adjust, add or remove boxes, then create layers.</div>
                 </div>
-                <button className="cm-btn cm-btn-accent" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} disabled={convertBusy || reviewOn} onClick={detectAndConvert}>
-                  {convertBusy ? 'Detecting…' : <React.Fragment><Icon name="layers" size={14} />Detect &amp; convert to layers</React.Fragment>}
-                </button>
-                <button className="cm-btn" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} disabled={convertBusy || reviewOn} onClick={selectOneManually}>
-                  <Icon name="lasso" size={13} />Select one object manually
-                </button>
-                {convertMsg && <div className="cm-note" style={{ color: 'var(--cm-accent)' }}>{convertMsg}</div>}
-                <div className="cm-note">Auto-detect everything, or draw one box yourself — adjust, add or remove boxes, then create layers.</div>
               </React.Fragment>
+            )}
+            </div>
+            {sideTab === 'layer' && props.active && (
+              <div className="cm-props-footer">
+                <span>Type: <b>{props.typeLabel}</b></span>
+                <span>Status: <b data-locked={props.locked}>{props.locked ? 'Locked' : 'Unlocked'}</b></span>
+              </div>
             )}
           </React.Fragment>
         )}
+        <ScrollCue within={sideRef} />
       </div>
       {compareOpen && (
         <div className="cm-compare-backdrop">

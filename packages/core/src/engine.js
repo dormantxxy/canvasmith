@@ -26,10 +26,15 @@ export function renderObjectsFlat(fc, W, H, objects) {
   canvasEl.width = W; canvasEl.height = H;
   const ctx = canvasEl.getContext('2d');
   const savedVpt = fc.viewportTransform;
+  // renderCanvas() cancels any on-screen render already requested (it assumes it IS that render).
+  // This one is offscreen, so put the request back afterwards — otherwise a pending repaint (e.g.
+  // the hover preview's) could be dropped and the screen left showing a stale frame.
+  const pending = !!fc.isRendering;
   fc.viewportTransform = [1, 0, 0, 1, 0, 0];
   fc.calcViewportBoundaries();
   try { fc.renderCanvas(ctx, objects); }
   finally { fc.viewportTransform = savedVpt; fc.calcViewportBoundaries(); }
+  if (pending) fc.requestRenderAll();
   return canvasEl;
 }
 
@@ -105,7 +110,10 @@ export class PaintEngine {
       if (this.fc.getObjects().includes(this._direct.layer)) return this._direct.layer;
       this._direct = null;   // target deleted mid-session — fall through and make a paint layer
     }
-    if (this.layer && this.fc.getObjects().includes(this.layer)) return this.layer;
+    // Normal mode draws in plain scene px straight onto this.cv, so the layer must sit exactly on
+    // the artboard — a paint layer trimmed to its strokes (Editor#_trimPaintLayer) or moved by the
+    // user no longer does, and gets a fresh artboard-sized layer instead of misplaced pixels.
+    if (this.layer && this.fc.getObjects().includes(this.layer) && this._onArtboard(this.layer)) return this.layer;
     this.cv = document.createElement('canvas');
     this.cv.width = this.W;
     this.cv.height = this.H;
@@ -123,6 +131,12 @@ export class PaintEngine {
       name: 'Paint ' + (this.fc.getObjects().filter(o => o.role === 'paint').length + 1),
     });
     this.layer = img; this.fc.add(img); return img;
+  }
+
+  _onArtboard(o) {
+    return o.left === 0 && o.top === 0 && (o.scaleX || 1) === 1 && (o.scaleY || 1) === 1 && !(o.angle % 360)
+      && !o.cropX && !o.cropY && Math.round(o.width) === this.W && Math.round(o.height) === this.H
+      && o._element === this.cv;
   }
 
   commit() {
@@ -394,11 +408,13 @@ export class PaintEngine {
     const paintLayers = this.fc.getObjects().filter(x => x.role === 'paint');
     paintLayers.forEach(o => {
       if (o && o._element && !(o._element instanceof HTMLCanvasElement)) {
+        // At the image's OWN size: a paint layer trimmed to its strokes isn't artboard-sized, and
+        // stretching it to W×H would smear it over the whole artboard after every undo.
         const cv = document.createElement('canvas');
-        cv.width = this.W;
-        cv.height = this.H;
+        cv.width = o._element.naturalWidth || o._element.width || this.W;
+        cv.height = o._element.naturalHeight || o._element.height || this.H;
         const ctx = cv.getContext('2d');
-        try { ctx.drawImage(o._element, 0, 0, this.W, this.H); } catch (e) { console.error(e); }
+        try { ctx.drawImage(o._element, 0, 0, cv.width, cv.height); } catch (e) { console.error(e); }
         o._element = cv;
         o.dirty = true;
       }
@@ -408,6 +424,7 @@ export class PaintEngine {
     // pointer to that same canvas (so addMask/removeMask/_refreshMaskFilter don't have to search
     // o.filters every time), and needs re-linking here after every restore.
     this.fc.getObjects().forEach(o => {
+      if (o.type !== 'image') return;   // vector layers keep their own mask (see mask.js attachVectorMask)
       const f = (o.filters || []).find(x => x.type === 'MaskFilter');
       o.maskCanvas = f ? f.maskCanvas : null;
     });

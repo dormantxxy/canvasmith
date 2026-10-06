@@ -1,0 +1,22 @@
+{
+  "name": "@canvasmith/gemini-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Canvasmith as a Gemini CLI extension: the full image editor in a browser tab, driven from the terminal over MCP.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node build.mjs",
+    "pack": "node build.mjs --pack",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
+    "esbuild": "^0.24.2"
+  }
+}

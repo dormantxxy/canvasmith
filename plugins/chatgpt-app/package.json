@@ -1,0 +1,24 @@
+{
+  "name": "@canvasmith/chatgpt-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Canvasmith as a ChatGPT app: the full image editor rendered inside the conversation (MCP App over Streamable HTTP).",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/server/index.mjs",
+    "dev": "node build.mjs && CANVASMITH_ALLOW_PRIVATE=1 node dist/server/index.mjs",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.1.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
+    "esbuild": "^0.24.2"
+  }
+}

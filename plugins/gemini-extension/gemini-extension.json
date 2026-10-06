@@ -1,0 +1,21 @@
+{
+  "name": "canvasmith",
+  "version": "0.1.0",
+  "description": "A Photoshop-grade image editor for Gemini CLI: open a photo or blank canvas in your browser, edit it, and hand the result back to Gemini.",
+  "mcpServers": {
+    "canvasmith": {
+      "command": "node",
+      "args": ["${extensionPath}${/}server${/}index.mjs"],
+      "cwd": "${extensionPath}",
+      "timeout": 600000
+    }
+  },
+  "contextFileName": "GEMINI.md",
+  "settings": [
+    {
+      "name": "Export folder",
+      "description": "Where images you export from Canvasmith are saved. Leave empty for ~/Pictures/Canvasmith.",
+      "envVar": "CANVASMITH_OUTPUT_DIR"
+    }
+  ]
+}

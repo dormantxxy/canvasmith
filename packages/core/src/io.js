@@ -3,7 +3,7 @@
    EXTRA lists the library's own layer metadata that must survive fabric.toJSON round-trips —
    drop one of these and undo/redo silently strips it from every layer. */
 
-export const EXTRA = ['id', 'role', 'name', 'locked', 'spec', 'fx', 'regionType', 'rcontent', 'rstyle', 'renamed', 'isFreehand', 'maskEnabled', 'adj'];
+export const EXTRA = ['id', 'role', 'name', 'locked', 'spec', 'fx', 'regionType', 'rcontent', 'rstyle', 'renamed', 'isFreehand', 'maskEnabled', 'adj', 'geom', 'cornerRadius', 'shapeKind', 'strokePosition', 'fillOff', 'strokeOff'];
 
 /* fc.toJSON() doesn't carry the artboard's own width/height (only its objects/background), so a
    canvas-size change (Editor#resizeCanvas) would otherwise be invisible to undo/redo — every

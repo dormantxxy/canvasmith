@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 
 import { hexRgb, rgba, toHex, relLum, rgbToHsl, hslToRgb, hexToHsl, recolorPixels, fxToFilterSpecs, FX_DEFAULTS, normalizeGradientStops, splitGradientStopColor } from '../packages/core/src/color.js';
 import { History } from '../packages/core/src/history.js';
+import { applyGeometry, isGeometryNeutral, straightenScale, keystoneQuad, squareToQuad, mapHomography, geometrySourcePoint } from '../packages/core/src/geometry.js';
+import { applyTone, isToneNeutral, buildCurveLut, whiteBalanceGains, TONE_DEFAULTS, normalizeCurves, compactCurves, curveHitTest, curveInsertPoint, curveMovePoint, curveRemovePoint, curveSvgPath, lumaHistogram, MAX_CURVE_POINTS, setHslValue, getHslValue, hslBandTrack } from '../packages/core/src/tone.js';
 import {
   startSelection, updateSelection, finalizeSelection, floodSelectPolygon, selectionFillRule,
   startPolyBuild, polyBuildAdd, polyBuildPreview, finishPolyBuild,
@@ -15,7 +17,7 @@ import { getCropHandle, dragCropRect } from '../packages/core/src/crop.js';
 import { readSession, writeSession, clearSession, discardToTrash, readDiscarded, parseProject } from '../packages/core/src/session.js';
 import { alignDelta, snapDelta } from '../packages/core/src/layout.js';
 import { parseLaunch } from '../packages/core/src/bridge.js';
-import { starPoints } from '../packages/core/src/shapes.js';
+import { starPoints, describeLayer } from '../packages/core/src/shapes.js';
 import { cvWorkerSource } from '../packages/core/src/cv/worker.js';
 import { CvEngine } from '../packages/core/src/cv/client.js';
 import { buildPromoLayout } from '../packages/core/src/templates.js';
@@ -318,7 +320,7 @@ test('cv: CvEngine degrades to null (never throws) with no Worker support', asyn
 /* ── image adjustment: fx -> Fabric filter spec mapping (Editor#setImageFilters) ──────────── */
 test('color: fxToFilterSpecs maps defaults to zero/neutral filter params', () => {
   const specs = fxToFilterSpecs(FX_DEFAULTS);
-  assert.deepEqual(specs.map(s => s.type), ['Brightness', 'Contrast', 'Saturation', 'Blur', 'HueRotation', 'Vibrance', 'Invert']);
+  assert.deepEqual(specs.map(s => s.type), ['Tone', 'Brightness', 'Contrast', 'Saturation', 'Blur', 'HueRotation', 'Vibrance', 'Invert']);
   assert.deepEqual(specs.find(s => s.type === 'Brightness').params, { brightness: 0 });
   assert.deepEqual(specs.find(s => s.type === 'Contrast').params, { contrast: 0 });
   assert.deepEqual(specs.find(s => s.type === 'Saturation').params, { saturation: 0 });
@@ -343,6 +345,221 @@ test('color: fxToFilterSpecs fills in missing keys from FX_DEFAULTS', () => {
   const specs = fxToFilterSpecs({ blur: 4 });
   assert.deepEqual(specs.find(s => s.type === 'Brightness').params, { brightness: 0 });
   assert.deepEqual(specs.find(s => s.type === 'Blur').params, { blur: 0.2 });
+});
+
+/* ── tone.js: exposure / highlights+shadows / white balance / curves / HSL ─────────────────── */
+const px = (...rgb) => new Uint8ClampedArray([...rgb, 255]);
+const toneOf = (rgb, p) => [...applyTone(px(...rgb), p).slice(0, 3)];
+
+test('tone: neutral params are a byte-exact no-op and report neutral', () => {
+  assert.equal(isToneNeutral(TONE_DEFAULTS), true);
+  assert.equal(isToneNeutral({ curves: { rgb: [[0, 0], [128, 128], [255, 255]] }, hsl: { red: { h: 0, s: 0, l: 0 } } }), true);
+  assert.deepEqual(toneOf([12, 130, 250], {}), [12, 130, 250]);
+});
+
+test('tone: fxToFilterSpecs passes every tone key through to the Tone spec', () => {
+  const curves = { rgb: [[0, 20], [255, 255]] };
+  const tone = fxToFilterSpecs({ exposure: 1, highlights: -40, curves }).find(s => s.type === 'Tone').params;
+  assert.equal(tone.exposure, 1); assert.equal(tone.highlights, -40); assert.equal(tone.curves, curves);
+  assert.equal(tone.shadows, 0); assert.equal(tone.hsl, null);
+});
+
+test('tone: +1 EV doubles linear light (mid grey 118 -> ~161), -1 EV halves it', () => {
+  const [up] = toneOf([118, 118, 118], { exposure: 1 });
+  const [down] = toneOf([118, 118, 118], { exposure: -1 });
+  assert.ok(Math.abs(up - 161) <= 2, 'got ' + up);
+  assert.ok(Math.abs(down - 84) <= 2, 'got ' + down);
+  assert.deepEqual(toneOf([0, 0, 0], { exposure: 3 }), [0, 0, 0]);
+});
+
+test('tone: shadows lift darks far more than brights; highlights recover brights, leave darks', () => {
+  const [d] = toneOf([40, 40, 40], { shadows: 100 }), [b] = toneOf([230, 230, 230], { shadows: 100 });
+  assert.ok(d - 40 > 20 && b - 230 < 3, `dark +${d - 40}, bright +${b - 230}`);
+  const [d2] = toneOf([40, 40, 40], { highlights: -100 }), [b2] = toneOf([230, 230, 230], { highlights: -100 });
+  assert.ok(230 - b2 > 30 && 40 - d2 < 2, `bright -${230 - b2}, dark -${40 - d2}`);
+});
+
+test('tone: highlights/shadows stay monotonic at every extreme', () => {
+  for (const p of [{ highlights: -100 }, { highlights: 100 }, { shadows: -100 }, { shadows: 100 }, { highlights: -100, shadows: 100 }]) {
+    let prev = -1;
+    for (let v = 0; v < 256; v += 5) { const [o] = toneOf([v, v, v], p); assert.ok(o >= prev, JSON.stringify(p) + ' at ' + v); prev = o; }
+  }
+});
+
+test('tone: highlights/shadows preserve hue (channel ratios) on a coloured pixel', () => {
+  const [r, g, b] = toneOf([40, 20, 10], { shadows: 60 });
+  assert.ok(Math.abs(r / g - 2) < 0.15 && Math.abs(g / b - 2) < 0.25, [r, g, b].join());
+});
+
+test('tone: temperature warms (R up, B down) / cools, tint trades green for magenta, grey stays ~grey-bright', () => {
+  const [wr, , wb] = toneOf([128, 128, 128], { temperature: 60 });
+  assert.ok(wr > 128 && wb < 128);
+  const [cr, , cb] = toneOf([128, 128, 128], { temperature: -60 });
+  assert.ok(cr < 128 && cb > 128);
+  const [mr, mg] = toneOf([128, 128, 128], { tint: 60 });
+  assert.ok(mg < 128 && mr > 128);
+  const g = whiteBalanceGains(80, -30);
+  assert.ok(Math.abs(0.2126 * g[0] + 0.7152 * g[1] + 0.0722 * g[2] - 1) < 1e-9, 'luminance-normalised');
+});
+
+test('tone: buildCurveLut hits its control points, is identity by default, never overshoots', () => {
+  const id = buildCurveLut(null);
+  for (let i = 0; i < 256; i += 17) assert.ok(Math.abs(id[i] - i) < 1e-4);
+  const s = buildCurveLut([[0, 0], [64, 40], [192, 215], [255, 255]]);
+  assert.ok(Math.abs(s[64] - 40) < 1e-4 && Math.abs(s[192] - 215) < 1e-4);
+  for (let i = 1; i < 256; i++) assert.ok(s[i] >= s[i - 1] - 1e-4, 'monotone at ' + i);
+  const flat = buildCurveLut([[50, 30], [200, 220]]);
+  assert.equal(flat[0], 30); assert.equal(flat[255], 220);
+});
+
+test('tone: curves apply master then per-channel', () => {
+  const inv = [[0, 255], [255, 0]];
+  assert.deepEqual(toneOf([10, 100, 200], { curves: { rgb: inv } }), [245, 155, 55]);
+  const [r, g, b] = toneOf([100, 100, 100], { curves: { r: [[0, 0], [100, 150], [255, 255]] } });
+  assert.deepEqual([r, g, b], [150, 100, 100]);
+});
+
+test('tone: HSL band targets its own hue, leaves distant hues and greys alone', () => {
+  const hsl = { blue: { h: 0, s: -100, l: 0 } };
+  const [br, bg, bb] = toneOf([30, 60, 220], { hsl });
+  // hue ~230deg sits 5/6 of the way from aqua to blue, so it gets ~95% of the blue band's effect
+  assert.ok(Math.max(br, bg, bb) - Math.min(br, bg, bb) < 20, 'blue desaturated: ' + [br, bg, bb]);
+  assert.deepEqual(toneOf([220, 40, 30], { hsl }), [220, 40, 30]);
+  assert.deepEqual(toneOf([128, 128, 128], { hsl: { red: { h: 100, s: 100, l: 100 } } }), [128, 128, 128]);
+  const [, , lb] = toneOf([30, 60, 220], { hsl: { blue: { l: -100 } } });
+  assert.ok(lb < 200, 'blue luminance down: ' + lb);
+  const [hr, hg] = toneOf([220, 30, 30], { hsl: { red: { h: 100 } } });
+  assert.ok(hg > 60 && hr > 180, 'red hue shifted toward orange: ' + [hr, hg]);
+});
+
+test('curves UI: normalize fills identity, compact drops it back to null', () => {
+  const n = normalizeCurves({ r: [[0, 10], [255, 255]] });
+  assert.deepEqual(n.rgb, [[0, 0], [255, 255]]); assert.deepEqual(n.r, [[0, 10], [255, 255]]);
+  assert.deepEqual(compactCurves(n), { r: [[0, 10], [255, 255]] });
+  assert.equal(compactCurves(normalizeCurves(null)), null);
+});
+
+test('curves UI: insert keeps order, refuses duplicate x and the point cap', () => {
+  const { points, index } = curveInsertPoint([[0, 0], [255, 255]], 100.4, 140);
+  assert.deepEqual(points, [[0, 0], [100, 140], [255, 255]]); assert.equal(index, 1);
+  assert.equal(curveInsertPoint(points, 100, 20).index, -1);
+  let pts = [[0, 0], [255, 255]];
+  for (let x = 10; pts.length < MAX_CURVE_POINTS; x += 10) pts = curveInsertPoint(pts, x, x).points;
+  assert.equal(curveInsertPoint(pts, 251, 3).index, -1);
+});
+
+test('curves UI: move clamps between neighbours; endpoints are not removable', () => {
+  const pts = [[0, 0], [100, 100], [200, 200], [255, 255]];
+  assert.deepEqual(curveMovePoint(pts, 1, 250, 300)[1], [199, 255]);
+  assert.deepEqual(curveMovePoint(pts, 0, 50, 30)[0], [50, 30]);
+  assert.deepEqual(curveMovePoint(pts, 0, 150, 30)[0], [99, 30]);
+  assert.equal(curveRemovePoint(pts, 0), pts);
+  assert.deepEqual(curveRemovePoint(pts, 2), [[0, 0], [100, 100], [255, 255]]);
+  assert.equal(curveHitTest(pts, 104, 97), 1); assert.equal(curveHitTest(pts, 150, 60), -1);
+});
+
+test('curves UI: svg path starts bottom-left and ends top-right for identity', () => {
+  const d = curveSvgPath([[0, 0], [255, 255]], 100);
+  assert.ok(d.startsWith('M0.0 100.0')); assert.ok(d.endsWith('L100 0.0'));
+});
+
+test('curves UI: lumaHistogram peaks at 1, skips transparent pixels', () => {
+  const data = new Uint8ClampedArray([0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0]);
+  const h = lumaHistogram(data);
+  assert.equal(h[0], 1); assert.ok(Math.abs(h[255] - Math.SQRT1_2) < 1e-6);
+});
+
+test('hsl UI: setHslValue keeps the stored shape minimal and collapses to null', () => {
+  let h = setHslValue(null, 'blue', 's', -40);
+  assert.deepEqual(h, { blue: { s: -40 } });
+  h = setHslValue(h, 'red', 'h', 10);
+  assert.equal(getHslValue(h, 'red', 'h'), 10); assert.equal(getHslValue(h, 'red', 'l'), 0);
+  h = setHslValue(h, 'blue', 's', 0);
+  assert.deepEqual(h, { red: { h: 10 } });
+  assert.equal(setHslValue(h, 'red', 'h', 0), null);
+  assert.match(hslBandTrack('green', 'h'), /hsl\(90 .*hsl\(150 /);
+});
+
+/* ── geometry.js: straighten / keystone / 4-corner perspective ─────────────────────────────── */
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
+test('geometry: neutral params are a byte-exact no-op', () => {
+  assert.equal(isGeometryNeutral({ quad: [[0, 0], [1, 0], [1, 1], [0, 1]] }), true);
+  const d = new Uint8ClampedArray(4 * 6).map((_, i) => i * 7);
+  assert.deepEqual([...applyGeometry(new Uint8ClampedArray(d), 3, 2, {})], [...d]);
+});
+
+test('geometry: straightenScale is 1 at 0deg and grows so the rotated frame always covers it', () => {
+  assert.equal(straightenScale(0, 400, 300), 1);
+  for (const a of [3, -10, 25, 45]) {
+    for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+      const [x, y] = geometrySourcePoint({ angle: a }, u, v, 400, 300);
+      assert.ok(x >= -1e-9 && x <= 1 + 1e-9 && y >= -1e-9 && y <= 1 + 1e-9, `angle ${a} corner ${u},${v} -> ${x},${y}`);
+    }
+  }
+  // tight: at least one corner lands exactly on the source edge
+  const xs = [[0, 0], [1, 0], [1, 1], [0, 1]].flatMap(([u, v]) => geometrySourcePoint({ angle: 12 }, u, v, 400, 300));
+  assert.ok(xs.some(c => near(c, 0, 1e-9) || near(c, 1, 1e-9)));
+});
+
+test('geometry: squareToQuad maps the unit square corners onto the quad', () => {
+  const q = [[0.1, 0.05], [0.95, 0.1], [0.8, 0.9], [0.2, 1]];
+  const H = squareToQuad(q);
+  [[0, 0], [1, 0], [1, 1], [0, 1]].forEach(([u, v], i) => {
+    const [x, y] = mapHomography(H, u, v);
+    assert.ok(near(x, q[i][0]) && near(y, q[i][1]), `corner ${i}`);
+  });
+  assert.equal(squareToQuad([[0, 0], [1, 0], [2, 0], [3, 0]]), null);
+});
+
+test('geometry: keystone quads stay inside the source (never expose empty space)', () => {
+  assert.deepEqual(keystoneQuad(0, 0), [[0, 0], [1, 0], [1, 1], [0, 1]]);
+  const q = keystoneQuad(100, 0);
+  assert.ok(near(q[0][0], 0.15) && near(q[1][0], 0.85) && q[2][0] === 1 && q[3][0] === 0);
+  for (const [v, h] of [[100, 100], [-100, -100], [60, -40]]) {
+    keystoneQuad(v, h).flat().forEach(c => assert.ok(c >= 0 && c <= 1));
+  }
+});
+
+test('geometry: a 180-degree-style quad flip actually resamples pixels', () => {
+  // 2x1 image: red | blue. Quad mirrored horizontally -> blue | red.
+  const d = new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 255]);
+  applyGeometry(d, 2, 1, { quad: [[1, 0], [0, 0], [0, 1], [1, 1]] });
+  assert.deepEqual([...d], [0, 0, 255, 255, 255, 0, 0, 255]);
+});
+
+test('geometry: the incremental resampler agrees with geometrySourcePoint (rotation + quad)', () => {
+  // R channel encodes x, G encodes y — the output then reads back where each pixel sampled from
+  const W = 200, H = 120, d = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; d[i] = x * 255 / (W - 1); d[i + 1] = y * 255 / (H - 1); d[i + 3] = 255; }
+  const p = { angle: 9, quad: [[0.1, 0.05], [0.9, 0], [0.95, 1], [0.02, 0.9]] };
+  applyGeometry(d, W, H, p);
+  for (const [px, py] of [[10, 10], [100, 60], [190, 110], [37, 83]]) {
+    const [u, v] = geometrySourcePoint(p, (px + 0.5) / W, (py + 0.5) / H, W, H);
+    const i = (py * W + px) * 4;
+    assert.ok(Math.abs(d[i] - ((u * W - 0.5) * 255 / (W - 1))) <= 2.5, `x at ${px},${py}: ${d[i]}`);
+    assert.ok(Math.abs(d[i + 1] - ((v * H - 0.5) * 255 / (H - 1))) <= 2.5, `y at ${px},${py}: ${d[i + 1]}`);
+  }
+});
+
+test('geometry: a user quad reaching outside the image yields transparent samples', () => {
+  const d = new Uint8ClampedArray(4 * 16).fill(200);
+  applyGeometry(d, 4, 4, { quad: [[-1, -1], [1, 0], [1, 1], [0, 1]] });
+  assert.equal(d[3], 0);            // top-left output pixel samples off-image
+  assert.equal(d[4 * 15 + 3], 200); // bottom-right still on-image
+});
+
+/* ── shapes.js describeLayer: layer-row subtitles ─────────────────────────────────────────── */
+test('describeLayer: text, groups, images, backgrounds and ad roles read like the design', () => {
+  const sz = (w, h) => ({ getScaledWidth: () => w, getScaledHeight: () => h });
+  assert.deepEqual(describeLayer({ type: 'i-text', fontFamily: '"Inter", sans-serif', fontWeight: 900, fontSize: 36, scaleY: 2 }), { kind: 'text', subtitle: 'Text: Inter Black 72pt' });
+  assert.equal(describeLayer({ type: 'group', _objects: [{ type: 'rect' }, { type: 'rect' }] }).subtitle, 'Group (2 elements)');
+  assert.equal(describeLayer({ type: 'group', _objects: [{ type: 'textbox' }, { type: 'rect' }] }).subtitle, 'Text & Vector Group');
+  assert.deepEqual(describeLayer({ type: 'image', ...sz(1080, 1080) }), { kind: 'image', subtitle: '1080×1080 Image' });
+  assert.equal(describeLayer({ type: 'image', maskCanvas: {}, ...sz(10, 20) }).subtitle, '10×20 Masked image');
+  assert.equal(describeLayer({ type: 'rect', role: 'bg', locked: true }).subtitle, 'Locked Solid Fill');
+  assert.equal(describeLayer({ type: 'group', role: 'badge' }).kind, 'badge');
+  assert.equal(describeLayer({ type: 'rect' }).subtitle, 'Vector Shape');
+  assert.equal(describeLayer({ type: 'image', role: 'adjustment' }).kind, 'adjustment');
 });
 
 /* ── gradient stops: alpha folding + round-trip (Editor#getShapeGradient's UI-facing consumers) ── */

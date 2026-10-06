@@ -1,3 +1,4 @@
+import { TONE_DEFAULTS, TONE_KEYS } from './tone.js';
 /* Colour utilities — pure functions, no DOM. */
 
 export function hexRgb(hex) {
@@ -115,8 +116,37 @@ export function splitGradientStopColor(color) {
 /* Defaults for non-destructive image adjustment (Editor#setImageFilters/getImageFilters). Human
    units: brightness/contrast/saturate are 100 = unchanged (50..150-ish range), blur is px (0 =
    none), hue is degrees (-180..180, 0 = unchanged), vibrance is -100..100 (0 = unchanged, same
-   shape as saturate but weighted toward already-muted colors), invert is a plain on/off toggle. */
-export const FX_DEFAULTS = { brightness: 100, contrast: 100, saturate: 100, blur: 0, hue: 0, vibrance: 0, invert: false };
+   shape as saturate but weighted toward already-muted colors), invert is a plain on/off toggle.
+   The photographic keys (exposure/highlights/shadows/temperature/tint/curves/hsl) come from
+   tone.js's TONE_DEFAULTS — see its header for their units. */
+export const FX_DEFAULTS = { brightness: 100, contrast: 100, saturate: 100, blur: 0, hue: 0, vibrance: 0, invert: false, ...TONE_DEFAULTS };
+
+/* The adjustment panel's slider list, shared by both shells (demo + @canvasmith/react) so they
+   can't drift apart: each entry is one FX_DEFAULTS key with its slider range in human units.
+   `track` (optional) is a CSS gradient painted as the slider track instead of the usual accent
+   fill — white balance reads far better as "blue ← → amber" than as a progress bar. Invert, the
+   curves editor and the HSL mixer aren't sliders and are rendered separately by each shell. */
+export const ADJUST_CONTROLS = [
+  { group: 'Light', key: 'exposure', label: 'Exposure', icon: 'exposure', min: -3, max: 3, step: 0.05 },
+  { group: 'Light', key: 'brightness', label: 'Brightness', icon: 'sun', min: 50, max: 150, step: 1 },
+  { group: 'Light', key: 'contrast', label: 'Contrast', icon: 'contrast', min: 50, max: 150, step: 1 },
+  { group: 'Light', key: 'highlights', label: 'Highlights', icon: 'highlights', min: -100, max: 100, step: 1 },
+  { group: 'Light', key: 'shadows', label: 'Shadows', icon: 'moon', min: -100, max: 100, step: 1 },
+  { group: 'Color', key: 'temperature', label: 'Temp', icon: 'thermo', min: -100, max: 100, step: 1, track: 'linear-gradient(to right, #3f78d8, #d9d9d9, #e8a232)' },
+  { group: 'Color', key: 'tint', label: 'Tint', icon: 'tint', min: -100, max: 100, step: 1, track: 'linear-gradient(to right, #3fae4a, #d9d9d9, #c64fc0)' },
+  { group: 'Color', key: 'saturate', label: 'Saturation', icon: 'droplet', min: 0, max: 200, step: 1 },
+  { group: 'Color', key: 'vibrance', label: 'Vibrance', icon: 'vibrance', min: -100, max: 100, step: 1 },
+  { group: 'Color', key: 'hue', label: 'Hue', icon: 'hue', min: -180, max: 180, step: 1 },
+  { group: 'Effects', key: 'blur', label: 'Blur', icon: 'blurfilter', min: 0, max: 12, step: 0.5 },
+];
+
+/* Human-readable slider readout: signed for bipolar controls, EV with two decimals. */
+export function formatAdjustValue(key, v) {
+  if (key === 'exposure') return (v > 0 ? '+' : '') + (+v).toFixed(2);
+  const c = ADJUST_CONTROLS.find(x => x.key === key);
+  if (c && c.min < 0) return (v > 0 ? '+' : '') + Math.round(v);
+  return String(Math.round(v * 10) / 10);
+}
 
 /* Pure mapping from human fx values to the Fabric Image.filters constructor args, so the mapping
    itself is testable without touching fabric. Mirrors the reference editor's setFx exactly:
@@ -130,7 +160,12 @@ export const FX_DEFAULTS = { brightness: 100, contrast: 100, saturate: 100, blur
    is a correct no-op either way, this is just about skipping needless per-pixel passes. */
 export function fxToFilterSpecs(fx) {
   const f = { ...FX_DEFAULTS, ...fx };
+  const tone = {};
+  TONE_KEYS.forEach(k => { tone[k] = f[k]; });
   return [
+    // first, so exposure/white balance see the untouched pixels (the raw-developer order) and
+    // brightness/contrast/etc. then act on the developed image
+    { type: 'Tone', params: tone },
     { type: 'Brightness', params: { brightness: (f.brightness - 100) / 100 } },
     { type: 'Contrast', params: { contrast: (f.contrast - 100) / 100 } },
     { type: 'Saturation', params: { saturation: (f.saturate - 100) / 100 } },

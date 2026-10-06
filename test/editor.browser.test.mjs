@@ -355,6 +355,100 @@ test('browser: installKeybindings wires delete/backspace on the active layer', a
   assert.equal(await page.evaluate(() => window.__ed.layers().length), 0);
 });
 
+test('browser: installKeybindings wires ⌘G group / ⌘⇧G ungroup on a multi-selection', async () => {
+  await page.evaluate(() => window.__ed.setTool('rect'));
+  const canvasBox = await page.locator('#cv').boundingBox();
+  for (const [x, y] of [[40, 40], [140, 140]]) {
+    await page.mouse.move(canvasBox.x + x, canvasBox.y + y);
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + x + 40, canvasBox.y + y + 40, { steps: 4 });
+    await page.mouse.up();
+  }
+  await page.evaluate(() => {
+    const ed = window.__ed;
+    ed.setTool('select');
+    const objs = ed.fc.getObjects().filter(o => o.role !== 'artboard' && o.selectable !== false);
+    ed.fc.setActiveObject(new fabric.ActiveSelection(objs, { canvas: ed.fc }));
+  });
+  await page.keyboard.press('Meta+g');
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__ed.fc.getActiveObject()?.type), 'group');
+  await page.keyboard.press('Meta+Shift+g');
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__ed.fc.getActiveObject()?.type), 'activeSelection');
+  await page.evaluate(() => { window.__ed.fc.discardActiveObject(); window.__ed.layers().forEach(l => window.__ed.removeLayer(l.id)); });
+});
+
+test('browser: layers() nests group members as children, and member ops stay inside the group', async () => {
+  const r = await page.evaluate(async () => {
+    const ed = window.__ed;
+    const a = new fabric.Rect({ left: 20, top: 20, width: 40, height: 40, fill: '#f00', id: 'ga', role: 'shape' });
+    const b = new fabric.Rect({ left: 90, top: 90, width: 40, height: 40, fill: '#00f', id: 'gb', role: 'shape' });
+    ed.fc.add(a, b);
+    ed.fc.setActiveObject(new fabric.ActiveSelection([a, b], { canvas: ed.fc }));
+    ed.groupSelection();
+    const out = {};
+    const top = () => ed.layers().filter(l => l.role !== 'bg');
+    const g = top()[0];
+    out.topCount = top().length;
+    out.group = { name: g.name, isGroup: g.isGroup, kids: g.children.map(c => c.id), parent: g.children[0].parentId === g.id };
+    ed.setLayer('ga', { visible: false });
+    out.hidden = ed.layers().find(l => l.isGroup).children.find(c => c.id === 'ga').visible;
+    ed.moveLayer('ga', 'up');   // ga was bottom member -> now top
+    out.afterMove = ed.layers().find(l => l.isGroup).children.map(c => c.id);
+    ed.activate('gb');
+    const g2 = ed.layers().find(l => l.isGroup);
+    out.focus = { groupActive: g2.active, childActive: g2.childActive, gbActive: g2.children.find(c => c.id === 'gb').active };
+    ed.undo();   // back to before activate/move? activate doesn't commit, so this undoes the move
+    await new Promise(res => setTimeout(res, 150));
+    out.afterUndo = ed.layers().find(l => l.isGroup)?.children.map(c => c.id);
+    ed.removeLayer('ga');
+    out.afterRemove = ed.layers().find(l => l.isGroup)?.children.map(c => c.id);
+    ed.removeLayer('gb');
+    out.afterRemoveLast = ed.layers().filter(l => l.role !== 'bg').length;
+    return out;
+  });
+  assert.equal(r.topCount, 1);
+  assert.deepEqual(r.group, { name: 'Group', isGroup: true, kids: ['gb', 'ga'], parent: true });
+  assert.equal(r.hidden, false);
+  assert.deepEqual(r.afterMove, ['ga', 'gb']);
+  assert.deepEqual(r.focus, { groupActive: true, childActive: true, gbActive: true });
+  assert.deepEqual(r.afterUndo, ['gb', 'ga']);   // member ids survive a history round-trip
+  assert.deepEqual(r.afterRemove, ['gb']);
+  assert.equal(r.afterRemoveLast, 0);   // removing the last member removes the group
+});
+
+test('browser: toggleLayerSelection builds a multi-selection from layer ids, which then groups', async () => {
+  const r = await page.evaluate(() => {
+    const ed = window.__ed;
+    ed.fc.add(
+      new fabric.Rect({ left: 10, top: 10, width: 30, height: 30, id: 'sa', role: 'shape' }),
+      new fabric.Rect({ left: 60, top: 60, width: 30, height: 30, id: 'sb', role: 'shape' }),
+      new fabric.Rect({ left: 110, top: 110, width: 30, height: 30, id: 'sc', role: 'shape' }));
+    const sel = () => ed.layers().filter(l => l.selected).map(l => l.id).sort();
+    const out = {};
+    ed.toggleLayerSelection('sa'); out.one = sel();
+    ed.toggleLayerSelection('sc'); out.two = sel(); out.type = ed.fc.getActiveObject().type;
+    ed.toggleLayerSelection('sb'); out.three = sel();
+    ed.toggleLayerSelection('sa'); out.dropped = sel();
+    ed.moveLayer('sb', 'top');   // a multi-selection member is still a top-level layer, not a group member
+    out.movedTop = ed.fc.getObjects().filter(o => o.role !== 'bg').map(o => o.id).includes('sb');
+    ed.toggleLayerSelection('sb'); ed.toggleLayerSelection('sb');   // re-sync the selection after the restack
+    out.group = ed.groupSelection().status;
+    out.kids = ed.layers().find(l => l.isGroup).children.map(c => c.id).sort();
+    ed.layers().forEach(l => ed.removeLayer(l.id));
+    return out;
+  });
+  assert.deepEqual(r.one, ['sa']);
+  assert.deepEqual(r.two, ['sa', 'sc']);
+  assert.equal(r.type, 'activeSelection');
+  assert.deepEqual(r.three, ['sa', 'sb', 'sc']);
+  assert.deepEqual(r.dropped, ['sb', 'sc']);
+  assert.equal(r.movedTop, true);
+  assert.equal(r.group, 'ok');
+  assert.deepEqual(r.kids, ['sb', 'sc']);
+});
+
 test('browser: holding Space pans the canvas with any tool active, without switching tools', async () => {
   await page.evaluate(() => window.__ed.setTool('brush'));
   const canvasBox = await page.locator('#cv').boundingBox();
@@ -793,7 +887,9 @@ test('browser: removeMask restores full visibility and addMask/removeMask no-op 
   const rectId = await page.evaluate(() => window.__ed.fc.getObjects()[0].id);
   await page.evaluate((id) => window.__ed.addMask(id), rectId);
   const rectHasMask = await page.evaluate((id) => !!window.__ed.fc.getObjects().find(x => x.id === id).maskCanvas, rectId);
-  assert.equal(rectHasMask, false);   // a vector shape (role 'shape') is not maskable in v1
+  assert.equal(rectHasMask, true);   // vector shapes are maskable (drawn through a vector mask — see mask.js)
+  await page.evaluate((id) => window.__ed.removeMask(id), rectId);
+  assert.equal(await page.evaluate((id) => !!window.__ed.fc.getObjects().find(x => x.id === id).maskCanvas, rectId), false);
 
   await page.evaluate(() => window.__ed.setTool('brush'));
   await page.mouse.move(canvasBox.x + 300, canvasBox.y + 100);
@@ -1861,4 +1957,1007 @@ test('browser: the wand picks the element under the cursor, not a bigger same-co
     return { x: Math.round(minx), y: Math.round(miny) };
   });
   assert.ok(box.y < 300, `selection started at y=${box.y}; the pill is at y=120, the card at y=500`);
+});
+
+/* ── tone filter (tone.js): exposure / white balance / curves / HSL on a real Fabric image ─────── */
+const addGreyImage = () => page.evaluate(async () => {
+  const c = document.createElement('canvas'); c.width = 20; c.height = 20;
+  const x = c.getContext('2d'); x.fillStyle = 'rgb(118,118,118)'; x.fillRect(0, 0, 20, 20);
+  const img = await window.__ed.addImage(c.toDataURL());
+  window.__ed.fc.setActiveObject(img);
+  return img.id;
+});
+const imgPixel = (id) => page.evaluate((id) => {
+  const o = window.__ed.fc.getObjects().find(x => x.id === id);
+  const el = o._filteredEl || o._element;
+  return Array.from(el.getContext ? el.getContext('2d').getImageData(10, 10, 1, 1).data : []);
+}, id);
+
+test('browser: setImageFilters exposure/temperature/curves/hsl bake through the Tone filter', async () => {
+  const id = await addGreyImage();
+  await page.evaluate(() => window.__ed.setImageFilters({ exposure: 1 }));
+  const [e] = await imgPixel(id);
+  assert.ok(Math.abs(e - 161) <= 2, 'exposure +1 on mid grey: ' + e);
+
+  await page.evaluate(() => window.__ed.setImageFilters({ exposure: 0, temperature: 60 }));
+  const [r, , b] = await imgPixel(id);
+  assert.ok(r > 118 && b < 118, `warm: r=${r} b=${b}`);
+
+  await page.evaluate(() => window.__ed.setImageFilters({ temperature: 0, curves: { rgb: [[0, 255], [255, 0]] } }));
+  const [inv] = await imgPixel(id);
+  assert.equal(inv, 137);
+
+  const fx = await page.evaluate(() => window.__ed.getImageFilters());
+  assert.deepEqual(fx.curves, { rgb: [[0, 255], [255, 0]] });
+  assert.equal(fx.hsl, null);
+});
+
+test('browser: Tone filter survives undo/redo and a toJSON/loadJSON round-trip', async () => {
+  const id = await addGreyImage();
+  await page.evaluate(() => window.__ed.setImageFilters({ exposure: 1 }));
+  await page.evaluate(() => window.__ed.setImageFilters({ exposure: -1 }));
+  await page.evaluate(() => window.__ed.undo());
+  await page.waitForTimeout(150);
+  const [afterUndo] = await imgPixel(id);
+  assert.ok(Math.abs(afterUndo - 161) <= 2, 'undo restores +1 EV: ' + afterUndo);
+  const types = await page.evaluate((id) => window.__ed.fc.getObjects().find(x => x.id === id).filters.map(f => f.type), id);
+  assert.ok(types.includes('Tone'));
+});
+
+test('browser: an adjustment layer applies tone params to everything below', async () => {
+  await addGreyImage();
+  await page.evaluate(() => window.__ed.addAdjustmentLayer({ exposure: -1 }));
+  await page.waitForTimeout(50);
+  const [v] = await page.evaluate(() => Array.from(window.__ed.fc.toCanvasElement().getContext('2d').getImageData(200, 150, 1, 1).data));
+  assert.ok(Math.abs(v - 84) <= 3, '-1 EV adjustment layer on mid grey: ' + v);
+});
+
+/* ── geometry filter (geometry.js): straighten / keystone / 4-corner perspective ──────────────── */
+const addSplitImage = () => page.evaluate(async () => {
+  // left half red, right half blue — easy to see a resample move pixels
+  const c = document.createElement('canvas'); c.width = 40; c.height = 20;
+  const x = c.getContext('2d'); x.fillStyle = '#ff0000'; x.fillRect(0, 0, 20, 20); x.fillStyle = '#0000ff'; x.fillRect(20, 0, 20, 20);
+  const img = await window.__ed.addImage(c.toDataURL());
+  window.__ed.fc.setActiveObject(img);
+  return img.id;
+});
+const elPixel = (id, x, y) => page.evaluate(([id, x, y]) => {
+  const o = window.__ed.fc.getObjects().find(q => q.id === id), el = o._filteredEl || o._element;
+  // with no active filters Fabric's element is the plain <img> — read it through a canvas
+  const c = document.createElement('canvas'); c.width = el.naturalWidth || el.width; c.height = el.naturalHeight || el.height;
+  c.getContext('2d').drawImage(el, 0, 0);
+  return Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data);
+}, [id, x, y]);
+
+test('browser: straighten keeps the frame size, fills every corner, and is one undo step', async () => {
+  const id = await addSplitImage();
+  const before = await page.evaluate(() => { const o = window.__ed.fc.getActiveObject(); return { w: o.width, h: o.height, l: o.left, t: o.top, d: window.__ed.history.depth().past }; });
+  await page.evaluate(() => { window.__ed.setImageGeometry({ angle: 5 }, { live: true }); window.__ed.setImageGeometry({ angle: 10 }, { live: true }); });
+  assert.ok(await page.evaluate(() => Array.isArray(window.__ed.geometryGuide)), 'guide grid while live');
+  await page.evaluate(() => window.__ed.setImageGeometry({}));
+  const after = await page.evaluate(() => { const o = window.__ed.fc.getActiveObject(); return { w: o.width, h: o.height, l: o.left, t: o.top, d: window.__ed.history.depth().past, guide: window.__ed.geometryGuide }; });
+  assert.deepEqual([after.w, after.h, after.l, after.t], [before.w, before.h, before.l, before.t]);
+  assert.equal(after.d, before.d + 1);
+  assert.equal(after.guide, null);
+  for (const [x, y] of [[0, 0], [39, 0], [0, 19], [39, 19]]) assert.equal((await elPixel(id, x, y))[3], 255, `corner ${x},${y} filled`);
+});
+
+test('browser: geometry survives undo/redo and composes with tone + mask in the right order', async () => {
+  const id = await addSplitImage();
+  await page.evaluate(() => window.__ed.setImageGeometry({ quad: [[1, 0], [0, 0], [0, 1], [1, 1]] }));   // mirror
+  assert.deepEqual((await elPixel(id, 2, 10)).slice(0, 3), [0, 0, 255]);
+  await page.evaluate(() => window.__ed.setImageFilters({ exposure: -1 }));
+  await page.evaluate((id) => window.__ed.addMask(id), id);
+  const order = await page.evaluate((id) => window.__ed.fc.getObjects().find(q => q.id === id).filters.map(f => f.type), id);
+  assert.deepEqual(order.slice(0, 3), ['Geometry', 'MaskFilter', 'Tone']);
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(150);   // mask
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(150);   // exposure
+  const px = await elPixel(id, 2, 10);
+  assert.deepEqual(px.slice(0, 3), [0, 0, 255], 'still mirrored after undoing later edits');
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(150);   // geometry
+  assert.deepEqual((await elPixel(id, 2, 10)).slice(0, 3), [255, 0, 0]);
+  await page.evaluate(() => window.__ed.redo()); await page.waitForTimeout(150);
+  assert.deepEqual((await elPixel(id, 2, 10)).slice(0, 3), [0, 0, 255]);
+  const geom = await page.evaluate(() => { const o = window.__ed.fc.getObjects().find(q => q.type === 'image'); window.__ed.fc.setActiveObject(o); return window.__ed.getImageGeometry(); });
+  assert.deepEqual(geom.quad, [[1, 0], [0, 0], [0, 1], [1, 1]]);
+});
+
+test('browser: perspective edit — drag a handle, apply sets quad; cancel/Escape restores', async () => {
+  await addSplitImage();
+  await page.evaluate(() => window.__ed.setImageGeometry({ angle: 3 }));
+  const d0 = await page.evaluate(() => window.__ed.history.depth().past);
+  assert.equal(await page.evaluate(() => window.__ed.enterPerspectiveEdit()), true);
+  const screen = await page.evaluate(() => {
+    const p = window.__ed.perspective, v = window.__ed.fc.viewportTransform, r = window.__ed.fc.upperCanvasEl.getBoundingClientRect();
+    return p.corners.map(c => [r.left + c.x * v[0] + v[4], r.top + c.y * v[3] + v[5]]);
+  });
+  await page.mouse.move(screen[0][0], screen[0][1]); await page.mouse.down();
+  await page.mouse.move(screen[0][0] + 40, screen[0][1] + 20, { steps: 4 }); await page.mouse.up();
+  const quad0 = await page.evaluate(() => window.__ed._persp.corners[0]);
+  assert.ok(quad0[0] > 0.05 && quad0[1] > 0.05, 'handle moved: ' + quad0);
+  await page.evaluate(() => window.__ed.applyPerspectiveEdit());
+  const g = await page.evaluate(() => ({ g: window.__ed.getImageGeometry(), d: window.__ed.history.depth().past, active: !!window.__ed.fc.getActiveObject(), p: window.__ed.perspective }));
+  assert.equal(g.g.angle, 3, 'straighten kept');
+  assert.ok(g.g.quad && g.g.quad[0][0] > 0.05);
+  assert.equal(g.d, d0 + 1); assert.equal(g.active, true); assert.equal(g.p, null);
+
+  await page.evaluate(() => window.__ed.enterPerspectiveEdit());
+  await page.evaluate(() => window.__ed.resetPerspectiveCorners());
+  await page.keyboard.press('Escape');
+  const g2 = await page.evaluate(() => ({ quad: window.__ed.getImageGeometry().quad, p: window.__ed.perspective, d: window.__ed.history.depth().past }));
+  assert.equal(g2.p, null); assert.ok(g2.quad && g2.quad[0][0] > 0.05, 'Escape kept the applied quad'); assert.equal(g2.d, d0 + 1);
+});
+
+/* ── left-panel AI card actions: removeBackground (mask, AI or local) / toggleAutoShadow ─────── */
+const addTestImage = (draw, w = 80, h = 60) => page.evaluate(async ([src, w, h]) => {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  new Function('ctx', 'w', 'h', src)(c.getContext('2d'), w, h);
+  const img = await window.__ed.addImage(c.toDataURL());
+  window.__ed.fc.setActiveObject(img);
+  return img.id;
+}, [draw, w, h]);
+const filteredAlpha = (id, x, y) => page.evaluate(([id, x, y]) => {
+  const o = window.__ed.fc.getObjects().find(q => q.id === id), el = o._filteredEl || o._element;
+  const c = document.createElement('canvas'); c.width = el.width; c.height = el.height;
+  c.getContext('2d').drawImage(el, 0, 0);
+  return c.getContext('2d').getImageData(x, y, 1, 1).data[3];
+}, [id, x, y]);
+
+test('browser: toggleAutoShadow adds a size-scaled shadow, then removes it — one undo step each', async () => {
+  await addTestImage("ctx.fillStyle='#c33';ctx.fillRect(0,0,w,h)");
+  const r = await page.evaluate(() => {
+    const ed = window.__ed, d0 = ed.history.depth().past;
+    const on = ed.toggleAutoShadow();
+    const o = ed.fc.getActiveObject(), sh = o.shadow && { blur: o.shadow.blur, y: o.shadow.offsetY };
+    const d1 = ed.history.depth().past;
+    const off = ed.toggleAutoShadow();
+    return { on, sh, off, d0, d1, d2: ed.history.depth().past, hasShadow: ed.layers().find(l => l.active).hasShadow };
+  });
+  assert.deepEqual(r.on, { on: true }); assert.deepEqual(r.off, { on: false });
+  assert.ok(r.sh.blur > 0 && r.sh.y > 0, JSON.stringify(r.sh));
+  assert.equal(r.d1, r.d0 + 1); assert.equal(r.d2, r.d1 + 1);
+  assert.equal(r.hasShadow, false);
+  assert.equal(await page.evaluate(() => { window.__ed.fc.discardActiveObject(); return window.__ed.toggleAutoShadow(); }), null);
+});
+
+test('browser: removeBackground via an AI provider keys the green screen into a layer mask', async () => {
+  const id = await addTestImage("ctx.fillStyle='#c33';ctx.fillRect(0,0,w,h)");
+  await page.evaluate(() => window.__ed.ai.register({
+    hasKey: () => true,
+    // subject on the right half, pure green where the background was
+    removeBackground: async (url) => { const c = document.createElement('canvas'); c.width = 80; c.height = 60; const x = c.getContext('2d'); x.fillStyle = '#00ff00'; x.fillRect(0, 0, 40, 60); x.fillStyle = '#c33'; x.fillRect(40, 0, 40, 60); return c.toDataURL(); },
+  }));
+  const r = await page.evaluate(async () => { const d0 = window.__ed.history.depth().past; const r = await window.__ed.removeBackground(); return { ...r, d: window.__ed.history.depth().past - d0, layer: window.__ed.layers().find(l => l.active) }; });
+  assert.equal(r.status, 'ok'); assert.equal(r.method, 'ai'); assert.equal(r.d, 1);
+  assert.equal(r.layer.hasMask, true); assert.match(r.layer.subtitle, /Masked image/);
+  assert.equal(await filteredAlpha(id, 8, 30), 0, 'green half hidden');
+  assert.equal(await filteredAlpha(id, 72, 30), 255, 'subject half kept');
+});
+
+test('browser: removeBackground falls back to the local GrabCut cutout when AI fails', async () => {
+  const id = await addTestImage("ctx.fillStyle='#f4f4f4';ctx.fillRect(0,0,w,h);ctx.fillStyle='#1d3fa8';ctx.beginPath();ctx.arc(w/2,h/2,Math.min(w,h)*0.3,0,7);ctx.fill()", 160, 120);
+  await page.evaluate(() => window.__ed.ai.register({ hasKey: () => true, removeBackground: async () => { throw new Error('offline'); } }));
+  const r = await page.evaluate(() => window.__ed.removeBackground());
+  assert.equal(r.status, 'ok', JSON.stringify(r)); assert.equal(r.method, 'local'); assert.equal(r.aiFallback, 'provider_failed');
+  assert.equal(await filteredAlpha(id, 4, 4), 0, 'corner background removed');
+  assert.ok(await filteredAlpha(id, 80, 60) > 200, 'subject centre kept');
+});
+
+/* ── offline background removal (cv worker cutout / cutRefine) ───────────────────────────── */
+test('browser: offline removeBackground keys a plain backdrop — inner same-colour areas stay, soft edges, decontam, invert drops it', async () => {
+  const id = await addTestImage("ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);ctx.fillStyle='#c0392b';ctx.fillRect(100,50,100,100);ctx.fillStyle='#ffffff';ctx.fillRect(120,90,60,20);ctx.fillStyle='#1f6f3f';ctx.beginPath();ctx.arc(250,150,30,0,7);ctx.fill()", 300, 200);
+  const r = await page.evaluate(async (id) => {
+    const ed = window.__ed, d0 = ed.history.depth().past;
+    const res = await ed.removeBackground({ method: 'local', id });
+    const o = ed._byId(id), mf = o.filters.find(f => f.type === 'MaskFilter');
+    return { res, d: ed.history.depth().past - d0, decon: !!mf.decontamCanvas, canRefine: ed.canRefineCutout(id) };
+  }, id);
+  assert.equal(r.res.status, 'ok', JSON.stringify(r.res)); assert.equal(r.res.method, 'local'); assert.equal(r.res.detail, 'flat');
+  assert.equal(r.d, 1, 'one undo step'); assert.equal(r.canRefine, true);
+  assert.equal(await filteredAlpha(id, 5, 5), 0, 'backdrop removed');
+  assert.equal(await filteredAlpha(id, 110, 60), 255, 'product kept');
+  assert.equal(await filteredAlpha(id, 150, 100), 255, 'white label inside the product is not backdrop');
+  // the circle's anti-aliased rim comes out partially transparent rather than stair-stepped
+  const partial = await page.evaluate((id) => {
+    const o = window.__ed._byId(id), el = o._filteredEl || o._element, c = document.createElement('canvas'); c.width = el.width; c.height = el.height;
+    const x = c.getContext('2d'); x.drawImage(el, 0, 0); const d = x.getImageData(210, 150, 50, 1).data;
+    let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && d[i] < 255) n++; return n;
+  }, id);
+  assert.ok(partial > 0, 'soft edge pixels: ' + partial);
+  assert.equal(await page.evaluate((id) => { const ed = window.__ed; ed.invertMask(id); return !!ed._byId(id).filters.find(f => f.type === 'MaskFilter').decontamCanvas; }, id), false, 'invert drops the edge-colour fix');
+});
+
+test('browser: offline cutout on a poster keeps small separate elements (logo, its tagline, a paw over the panel) but drops faint backdrop noise', async () => {
+  // Regression: clean-up kept only pieces ≥4% of the largest, so on a poster the logo and paw
+  // prints (tiny next to the main panel) were cut out with the backdrop.
+  const id = await addTestImage(`
+    ctx.fillStyle='#efe6c1';ctx.fillRect(0,0,w,h);
+    let seed=3;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+    for(let i=0;i<300;i++){ctx.fillStyle='rgba(225,214,170,0.7)';ctx.fillRect(rnd()*w,rnd()*h,5,5);}   // faint backdrop speckle
+    ctx.fillStyle='#b2c643';ctx.beginPath();ctx.roundRect(100,220,400,260,30);ctx.fill();               // the big panel
+    ctx.fillStyle='#b8322a';ctx.fillRect(470,40,90,36);                                                   // logo
+    ctx.fillStyle='#d9822b';for(let i=0;i<9;i++)ctx.fillRect(470+i*10,82,6,6);                           // tagline: tiny letters under it
+    ctx.fillStyle='#efe6c1';ctx.beginPath();ctx.arc(110,230,46,0,7);ctx.fill();                          // paw's backdrop-coloured outline...
+    ctx.fillStyle='#b2c643';ctx.beginPath();ctx.arc(110,230,38,0,7);ctx.fill();                          // ...over the panel's corner`, 600, 500);
+  const r = await page.evaluate((id) => window.__ed.removeBackground({ method: 'local', id }), id);
+  assert.equal(r.status, 'ok', JSON.stringify(r)); assert.equal(r.detail, 'flat');
+  assert.equal(await filteredAlpha(id, 300, 350), 255, 'panel kept');
+  assert.equal(await filteredAlpha(id, 515, 58), 255, 'logo kept');
+  assert.equal(await filteredAlpha(id, 503, 85), 255, 'tagline letter kept (joins the logo next to it)');
+  assert.equal(await filteredAlpha(id, 95, 215), 255, 'paw kept');
+  assert.equal(await filteredAlpha(id, 20, 20), 0, 'backdrop removed');
+  const noise = await page.evaluate((id) => {
+    const o = window.__ed._byId(id), el = o._filteredEl || o._element, c = document.createElement('canvas'); c.width = el.width; c.height = el.height;
+    const x = c.getContext('2d'); x.drawImage(el, 0, 0); const d = x.getImageData(0, 0, 600, 170).data;   // top band, above the paw (its top is at y≈184): backdrop + logo
+    let n = 0; for (let i = 0; i < d.length; i += 4) { const px = (i / 4) % 600, py = Math.floor(i / 4 / 600); if (px >= 460 && py <= 100) continue; if (d[i + 3] > 128) n++; } return n;
+  }, id);
+  assert.ok(noise < 30, 'faint speckle stays removed: ' + noise + ' opaque px');
+});
+
+test('browser: offline cutout on a busy backdrop (GrabCut), Keep/Remove touch-ups re-cut around the stroke, serialized, off after undo', async () => {
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 400; c.height = 300; const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 400, 300); g.addColorStop(0, '#5a86c8'); g.addColorStop(1, '#a8c97a'); x.fillStyle = g; x.fillRect(0, 0, 400, 300);
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 1500; i++) { x.fillStyle = `rgba(${80 + rnd() * 80 | 0},${120 + rnd() * 80 | 0},${140 + rnd() * 60 | 0},0.5)`; x.fillRect(rnd() * 400, rnd() * 300, 5, 5); }
+    x.fillStyle = '#f08a24'; x.beginPath(); x.ellipse(200, 150, 70, 95, 0.2, 0, 7); x.fill();
+    x.fillStyle = '#d81b60'; x.fillRect(320, 30, 50, 50);   // a second thing that stands out — the stroke removes it
+    await window.__ed.openImage(c.toDataURL('image/png'));
+  });
+  const id = await page.evaluate(() => { const o = window.__ed.fc.getObjects().find(q => q.type === 'image'); window.__ed.fc.setActiveObject(o); return o.id; });
+  const r = await page.evaluate((id) => window.__ed.removeBackground({ method: 'local', id }), id);
+  assert.equal(r.status, 'ok', JSON.stringify(r)); assert.equal(r.detail, 'grabcut');
+  assert.ok(await filteredAlpha(id, 200, 150) > 240, 'subject kept');
+  assert.equal(await filteredAlpha(id, 20, 280), 0, 'backdrop corner removed');
+
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  const stroke = async (mode, pts) => {
+    const d0 = await page.evaluate((m) => { const ed = window.__ed; ed.enterMaskEdit(ed.fc.getObjects().find(q => q.type === 'image').id); ed.setToolOptions({ size: 24 }); ed.setMaskRefine(m); return ed.history.depth().past; }, mode);
+    await page.mouse.move(...at(...pts[0])); await page.mouse.down();
+    for (const p of pts.slice(1)) await page.mouse.move(...at(...p));
+    await page.mouse.up();
+    await page.waitForFunction((d) => window.__ed.history.depth().past > d, d0, { timeout: 20000 });
+    return page.evaluate((d) => window.__ed.history.depth().past - d, d0);
+  };
+  assert.equal(await stroke('remove', [[325, 55], [345, 55], [365, 55]]), 1, 'one undo step per stroke');
+  assert.equal(await filteredAlpha(id, 345, 55), 0, 'Remove stroke cut the square out');
+  assert.ok(await filteredAlpha(id, 200, 150) > 240, 'the subject is untouched');
+  await stroke('keep', [[40, 240], [60, 240]]);
+  assert.ok(await filteredAlpha(id, 50, 240) > 200, 'Keep stroke brought backdrop back');
+  const after = await page.evaluate(async () => {
+    const ed = window.__ed, json = ed.toJSON();
+    ed.undo(); await new Promise(r => setTimeout(r, 400));   // undo restores the scene asynchronously
+    return { serialized: json.includes('decontamDataURL'), canRefine: ed.canRefineCutout(), refineSet: ed.setMaskRefine('keep') };
+  });
+  assert.ok(after.serialized, 'the edge-colour fix is saved with the mask');
+  assert.equal(after.canRefine, false, 'touch-ups need the live cutout — not after an undo');
+  assert.equal(after.refineSet, false);
+});
+
+test('browser: mask brush strokes land under the pointer on a fitted / offset / scaled image (not at artboard px)', async () => {
+  // a 100×100 image fitted into the 400×300 artboard: left 50, ×3 — mask px are NOT scene px
+  const id = await addTestImage("ctx.fillStyle='#c33';ctx.fillRect(0,0,w,h)", 100, 100);
+  const placed = await page.evaluate((id) => { const ed = window.__ed, o = ed._byId(id); ed.addMask(id); ed.enterMaskEdit(id); ed.setToolOptions({ size: 9, color: '#000000', hardness: 1 }); return { left: o.left, sx: o.scaleX }; }, id);
+  assert.deepEqual(placed, { left: 50, sx: 3 });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  await page.mouse.move(box.x + vt[4] + 80 * vt[0], box.y + vt[5] + 30 * vt[3]);   // scene (80,30) = image px (10,10)
+  await page.mouse.down(); await page.mouse.up();
+  await page.waitForTimeout(100);
+  assert.equal(await filteredAlpha(id, 10, 10), 0, 'hidden right under the pointer');
+  assert.equal(await filteredAlpha(id, 20, 10), 255, 'not where artboard px would put it');
+});
+
+test('browser: removeBackground reports no_target without an image or paint layer selected', async () => {
+  const r = await page.evaluate(() => window.__ed.removeBackground());
+  assert.equal(r.status, 'error'); assert.equal(r.reason, 'no_target');
+});
+
+/* ── rounded corners stay round under non-uniform resize (Editor#_bindRoundCorners) ─────────── */
+const cornerExtent = () => page.evaluate(() => {
+  const o = window.__ed.fc.getObjects().find(q => q.type === 'rect' || q.type === 'group');
+  const el = o.toCanvasElement({ enableRetinaScaling: false });
+  const W = el.width, H = el.height, d = el.getContext('2d').getImageData(0, 0, W, H).data, a = (x, y) => d[(y * W + x) * 4 + 3];
+  let cx = 0; while (cx < W && a(cx, 0) < 128) cx++;
+  let cy = 0; while (cy < H && a(0, cy) < 128) cy++;
+  return { cx, cy, W, H };
+});
+
+test('browser: dragging a side handle keeps a rect\'s rounded corners circular', async () => {
+  await page.evaluate(() => { const ed = window.__ed; const r = new ed.fabric.Rect({ left: 40, top: 40, width: 100, height: 60, rx: 20, ry: 20, fill: '#7a2e10', strokeWidth: 0 }); ed.fc.add(r); ed.fc.setActiveObject(r); ed.fc.renderAll(); ed.commit('r'); });
+  const before = await cornerExtent();
+  const box = await page.locator('#cv').boundingBox();
+  const { mr, z } = await page.evaluate(() => { const o = window.__ed.fc.getActiveObject(); o.setCoords(); return { mr: { x: o.oCoords.mr.x, y: o.oCoords.mr.y }, z: window.__ed.fc.viewportTransform[0] }; });
+  await page.mouse.move(box.x + mr.x, box.y + mr.y); await page.mouse.down();
+  await page.mouse.move(box.x + mr.x + 100 * z, box.y + mr.y, { steps: 8 }); await page.mouse.up();
+  await page.waitForTimeout(100);
+  const after = await cornerExtent();
+  assert.ok(after.W > before.W * 1.8, 'widened');
+  assert.ok(Math.abs(after.cx - after.cy) <= 2, `round, not oval: ${after.cx} × ${after.cy}`);
+  assert.ok(Math.abs(after.cx - before.cx) <= 2, `same radius as before the resize: ${after.cx} vs ${before.cx}`);
+  assert.equal(await page.evaluate(() => Math.round(window.__ed.cornerRadiusOf(window.__ed.fc.getActiveObject()))), 20);
+});
+
+test('browser: panel W/H and radius edits keep corners round, radius is true pixels, survives undo', async () => {
+  await page.evaluate(() => { const ed = window.__ed; const r = new ed.fabric.Rect({ left: 40, top: 40, width: 100, height: 60, fill: '#7a2e10', strokeWidth: 0 }); ed.fc.add(r); ed.fc.setActiveObject(r); ed.commit('r'); });
+  await page.evaluate(() => window.__ed.setNumeric({ rx: 18 }));
+  await page.evaluate(() => window.__ed.setNumeric({ w: 300 }));
+  const a = await cornerExtent();
+  assert.ok(Math.abs(a.cx - a.cy) <= 2, `round after W edit: ${a.cx} × ${a.cy}`);
+  await page.evaluate(() => window.__ed.setNumeric({ h: 20 }));   // shorter than 2 × radius: clamps, no over-round
+  const clamped = await page.evaluate(() => { const o = window.__ed.fc.getActiveObject(); return { r: window.__ed.cornerRadiusOf(o), ry: o.ry * o.scaleY }; });
+  assert.equal(clamped.r, 18); assert.ok(clamped.ry <= 10.01, 'rendered radius clamped to half the height');
+  await page.evaluate(() => window.__ed.setNumeric({ h: 60 }));
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(150);
+  const r = await page.evaluate(() => { const o = window.__ed.fc.getObjects().find(q => q.type === 'rect'); return { r: window.__ed.cornerRadiusOf(o), sx: o.scaleX, sy: o.scaleY, rx: o.rx, ry: o.ry }; });
+  assert.equal(r.r, 18, 'cornerRadius restored from history');
+  assert.ok(Math.abs(r.rx * r.sx - r.ry * r.sy) < 0.01 || r.ry * r.sy <= 10.01, JSON.stringify(r));
+});
+
+test('browser: a CTA pill stays a pill when its group is stretched', async () => {
+  await page.evaluate(() => { const ed = window.__ed; ed.addCTA({ x: 150, y: 100 }, { text: 'Shop' }); ed.fc.setActiveObject(ed.fc.getObjects().find(o => o.role === 'cta')); });
+  await page.evaluate(() => window.__ed.setNumeric({ w: 360 }));
+  const pill = await page.evaluate(() => {
+    const g = window.__ed.fc.getObjects().find(o => o.role === 'cta'), r = g._objects.find(o => o.type === 'rect');
+    const m = window.__ed.fabric.util.qrDecompose(r.calcTransformMatrix());
+    return { rxScene: r.rx * Math.abs(m.scaleX), ryScene: r.ry * Math.abs(m.scaleY), hScene: r.height * Math.abs(m.scaleY) };
+  });
+  assert.ok(Math.abs(pill.rxScene - pill.ryScene) < 0.5, JSON.stringify(pill));
+  assert.ok(Math.abs(pill.ryScene - pill.hScene / 2) < 0.5, 'still fully rounded ends');
+});
+
+/* Crop on a selected shape clips that shape (rect clipPath in its own frame) instead of cropping
+   the whole artboard; re-entering shows the full shape seeded to the last window, cancel restores. */
+test('browser: crop tool on a selected shape clips the shape, not the artboard', async () => {
+  const r = await page.evaluate(() => {
+    const ed = window.__ed, f = ed.fabric;
+    const o = new f.Rect({ left: 40, top: 40, width: 100, height: 60, fill: '#ff0000', scaleX: 2, strokeWidth: 0 });
+    o.set({ id: 's1', role: 'shape', name: 'S1' });
+    ed.fc.add(o); ed.commit('add'); ed.fc.setActiveObject(o);
+    const W = ed.W, H = ed.H;
+    ed.setTool('crop');
+    const seed = { ...ed.crop }, target = ed._cropTarget;
+    ed.crop = { x: 40, y: 40, w: 100, h: 60 };   // left half of the 200px-wide scaled rect
+    ed.applyCrop();
+    const c = ed._byId('s1').clipPath;
+    const clip = c && { role: c.role, w: c.width, h: c.height };
+    ed.fc.setActiveObject(ed._byId('s1')); ed.setTool('crop');
+    const reseed = { ...ed.crop }, clipWhileCropping = !!ed._byId('s1').clipPath;
+    ed.setTool('select');
+    return { seed, target, clip, W, H, W2: ed.W, H2: ed.H, reseed, clipWhileCropping, restored: ed._byId('s1').clipPath?.role, json: ed.toJSON().includes('"role":"crop"') };
+  });
+  assert.deepEqual(r.seed, { x: 40, y: 40, w: 200, h: 60 });
+  assert.equal(r.target, 's1');
+  assert.deepEqual(r.clip, { role: 'crop', w: 50, h: 60 });
+  assert.equal(r.W2, r.W); assert.equal(r.H2, r.H);   // artboard untouched
+  assert.deepEqual(r.reseed, { x: 40, y: 40, w: 100, h: 60 });
+  assert.equal(r.clipWhileCropping, false);
+  assert.equal(r.restored, 'crop');
+  assert.ok(r.json, 'crop clip survives serialisation');
+});
+
+/* The eraser on a selected vector shape paints into a vector-layer mask: the shape stays an
+   editable rect, the erased area moves with it and survives a fill change, undo/redo and reload. */
+test('browser: eraser on a selected shape masks it non-destructively (stays a vector)', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed;
+    const o = new ed.fabric.Rect({ left: 60, top: 60, width: 200, height: 120, fill: '#ff0000', strokeWidth: 0 });
+    o.set({ id: 'v1', role: 'shape', name: 'V1' });
+    ed.fc.add(o); ed.commit('add'); ed.fc.setActiveObject(o);
+    ed.setTool('eraser'); ed.setToolOptions({ size: 30, hardness: 1 });
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const z = await page.evaluate(() => { const vt = window.__ed.fc.viewportTransform; return { z: vt[0], tx: vt[4], ty: vt[5] }; });
+  const sx = x => box.x + z.tx + x * z.z, sy = y => box.y + z.ty + y * z.z;
+  await page.mouse.move(sx(40), sy(120)); await page.mouse.down();
+  await page.mouse.move(sx(280), sy(120), { steps: 12 }); await page.mouse.up();
+  await page.waitForTimeout(50);
+  // alpha of the rendered scene at scene px (x, y)
+  const alphaAt = (pts) => page.evaluate(async (pts) => {
+    const ed = window.__ed;
+    ed.fc.renderAll();
+    const el = ed.fc.toCanvasElement(1 / ed.fc.getZoom(), { left: ed.fc.viewportTransform[4], top: ed.fc.viewportTransform[5], width: ed.W * ed.fc.getZoom(), height: ed.H * ed.fc.getZoom() });
+    const ctx = el.getContext('2d'), k = el.width / ed.W;
+    return pts.map(([x, y]) => { const d = ctx.getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data; return d[0] > 200 && d[1] < 80 ? 'red' : 'other'; });
+  }, pts);
+  let r = await page.evaluate(() => { const o = window.__ed._byId('v1'); return { type: o.type, mask: !!o.maskCanvas, json: window.__ed.toJSON().includes('"vmask"') }; });
+  assert.deepEqual(r, { type: 'rect', mask: true, json: true });
+  assert.deepEqual(await alphaAt([[160, 120], [160, 75]]), ['other', 'red'], 'stroke hides the shape, the rest stays');
+  // still a vector: recolour + move, the hole follows
+  await page.evaluate(() => { const ed = window.__ed, o = ed._byId('v1'); ed.setTool('select'); o.set({ fill: '#ff1010', left: 260 }); o.setCoords(); ed.commit('edit'); });
+  assert.deepEqual(await alphaAt([[360, 120], [360, 75], [160, 120]]), ['other', 'red', 'other']);
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(100);   // undo the move
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(100);   // undo the erase
+  assert.deepEqual(await alphaAt([[160, 120]]), ['red'], 'undo removes the erase');
+  await page.evaluate(() => window.__ed.redo()); await page.waitForTimeout(100);
+  assert.deepEqual(await alphaAt([[160, 120]]), ['other'], 'redo brings the mask back');
+  const json = await page.evaluate(() => window.__ed.toJSON());
+  await page.evaluate((j) => window.__ed.loadJSON(j), json); await page.waitForTimeout(300);
+  assert.deepEqual(await alphaAt([[160, 120], [160, 75]]), ['other', 'red'], 'mask survives save/load');
+});
+
+/* ── pen tool: Figma-style bezier drawing + vector edit mode ─────────────────────────────── */
+const penHelpers = async () => {
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  const click = async (x, y) => { await page.mouse.click(...at(x, y)); };
+  const drag = async (x, y, x2, y2, mods = []) => {
+    await page.mouse.move(...at(x, y));
+    for (const m of mods) await page.keyboard.down(m);
+    await page.mouse.down(); await page.mouse.move(...at(x2, y2), { steps: 6 }); await page.mouse.up();
+    for (const m of mods) await page.keyboard.up(m);
+  };
+  const pens = () => page.evaluate(() => window.__ed.fc.getObjects().filter(o => o.shapeKind === 'pen')
+    .map(o => ({ id: o.id, type: o.type, fill: o.fill, stroke: o.stroke, cmds: o.path.map(c => c[0]).join('') })));
+  return { at, click, drag, pens };
+};
+
+test('browser: pen — click is a corner, click-drag a mirrored curve, clicking the first point closes into a filled path', async () => {
+  const { click, drag, pens } = await penHelpers();
+  await page.evaluate(() => window.__ed.setTool('pen'));
+  assert.match(await page.evaluate(() => window.__ed.fc.defaultCursor), /^url\("data:image\/svg\+xml/, 'pen has its own cursor');
+  await click(60, 60);
+  await drag(200, 60, 260, 60);   // smooth point: handles mirrored through the anchor
+  const n = await page.evaluate(() => { const p = window.__ed._penBuild.nodes[1]; return { hi: p.hi, ho: p.ho, x: p.x, y: p.y }; });
+  assert.ok(Math.abs((n.hi.x + n.ho.x) / 2 - n.x) < 0.5 && Math.abs((n.hi.y + n.ho.y) / 2 - n.y) < 0.5, 'symmetric handles');
+  await click(150, 200);
+  await click(60, 60);            // back onto the first point
+  const [p] = await pens();
+  assert.equal(p.type, 'path');
+  assert.ok(p.cmds.startsWith('M') && p.cmds.includes('C') && p.cmds.endsWith('Z'), p.cmds);
+  assert.ok(p.fill, 'closed path is filled');
+  assert.equal(await page.evaluate(() => window.__ed.tool), 'select');
+});
+
+test('browser: pen — ⌥-drag breaks the handle, Backspace / ⌘Z step points back, Escape keeps an open stroked path', async () => {
+  const { click, drag, pens } = await penHelpers();
+  await page.evaluate(() => window.__ed.setTool('pen'));
+  await click(40, 40);
+  await drag(140, 40, 200, 40, ['Alt']);
+  assert.equal(await page.evaluate(() => window.__ed._penBuild.nodes[1].hi), null, 'Alt-drag leaves the incoming side a corner');
+  await click(200, 150); await click(300, 150);
+  await page.keyboard.press('Backspace');
+  assert.equal(await page.evaluate(() => window.__ed._penBuild.nodes.length), 3);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  assert.equal(await page.evaluate(() => window.__ed._penBuild.nodes.length), 4, '⌘Z undoes the Backspace inside the build');
+  await page.keyboard.press('Escape');   // Figma: Escape ends the path, keeping it
+  const [p] = await pens();
+  assert.ok(p && !p.fill && p.stroke, 'open path is stroke-only');
+  assert.equal(p.cmds, 'MLCL', 'corner, cusp (curve out only), two corners — no Z');
+});
+
+test('browser: vector edit — double-click enters, drag moves a point, double-click a segment adds one, Delete removes it, undo stays in edit', async () => {
+  const { at, click, drag, pens } = await penHelpers();
+  await page.evaluate(() => window.__ed.setTool('pen'));
+  await click(50, 150); await click(200, 50); await click(350, 150);
+  await page.keyboard.press('Enter');
+  await page.mouse.dblclick(...at(200, 50));
+  const ed = (fn) => page.evaluate(fn);
+  assert.deepEqual(await ed(() => window.__ed.pathEdit && window.__ed.pathEdit.count), 3, 'in vector edit mode');
+  await drag(200, 50, 200, 90);
+  const mid = await ed(() => { const n = window.__ed._pathEdit.nodes[1]; return [Math.round(n.x), Math.round(n.y)]; });
+  assert.ok(Math.abs(mid[1] - 90) <= 2, 'point moved: ' + mid);
+  // the layer itself follows
+  const top = await ed(() => window.__ed.fc.getObjects().find(o => o.shapeKind === 'pen').getBoundingRect(true).top);
+  assert.ok(top > 80, 'path redrawn from the edited points: top ' + top);
+  await page.mouse.dblclick(...at(125, 120));   // on the segment 50,150 -> 200,90
+  assert.equal(await ed(() => window.__ed.pathEdit.count), 4, 'point added');
+  await page.keyboard.press('Delete');
+  assert.equal(await ed(() => window.__ed.pathEdit.count), 3, 'selected point deleted');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  await page.waitForTimeout(200);
+  assert.equal(await ed(() => window.__ed.pathEdit && window.__ed.pathEdit.count), 4, 'undo restores the point and keeps editing');
+  await page.keyboard.press('Enter');
+  assert.equal(await ed(() => window.__ed.pathEdit), null);
+  assert.equal((await pens()).length, 1);
+});
+
+test('browser: pen on a selected path — click its outline adds a point, an open end continues it, ⌥-click a point toggles smooth', async () => {
+  const { at, click, pens } = await penHelpers();
+  await page.evaluate(() => window.__ed.setTool('pen'));
+  await click(50, 150); await click(200, 150);
+  await page.keyboard.press('Enter');                       // selected, select tool
+  await page.evaluate(() => window.__ed.setTool('pen'));    // Pen with a path selected -> edits it
+  assert.equal(await page.evaluate(() => window.__ed.pathEdit && window.__ed.pathEdit.count), 2);
+  await click(125, 150);                                    // on the segment
+  assert.equal(await page.evaluate(() => window.__ed.pathEdit.count), 3);
+  await page.keyboard.down('Alt'); await click(125, 150); await page.keyboard.up('Alt');
+  assert.ok(await page.evaluate(() => { const n = window.__ed._pathEdit.nodes[1]; return !!(n.hi && n.ho); }), 'Alt-click made it smooth');
+  await click(200, 150);                                    // open end: keep drawing from it
+  assert.ok(await page.evaluate(() => !!window.__ed._penBuild && window.__ed._penBuild.contId));
+  await click(300, 250);
+  await page.keyboard.press('Enter');
+  const all = await pens();
+  assert.equal(all.length, 1, 'continued the same layer');
+  assert.equal(all[0].cmds.length, 4, all[0].cmds);
+});
+
+test('browser: a rotated/scaled path edits in place — its points keep their on-screen positions', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed, o = new ed.fabric.Path('M 0 0 L 100 0 L 100 60 Z', { left: 100, top: 100, fill: '#ff0000', angle: 30, scaleX: 1.5 });
+    o.set({ id: 'rp', role: 'shape', name: 'R' }); ed.fc.add(o); ed.commit('add');
+  });
+  const before = await page.evaluate(() => {
+    const o = window.__ed._byId('rp'), m = o.calcTransformMatrix(), F = window.__ed.fabric;
+    return o.path.filter(c => c[0] !== 'Z').map(c => { const q = F.util.transformPoint(new F.Point(c[1] - o.pathOffset.x, c[2] - o.pathOffset.y), m); return [Math.round(q.x), Math.round(q.y)]; });
+  });
+  assert.equal(await page.evaluate(() => window.__ed.editPath('rp')), true);
+  const after = await page.evaluate(() => window.__ed._pathEdit.nodes.map(n => [Math.round(n.x), Math.round(n.y)]));
+  assert.deepEqual(after, before);
+  assert.deepEqual(await page.evaluate(() => { const o = window.__ed._byId('rp'); return [o.angle, o.scaleX]; }), [0, 1], 'transform baked into the points');
+});
+
+/* ── object gradient stays editable: handles persist until a click outside the shape ───────── */
+test('browser: object gradient keeps its handles after the drag — ends re-aim it, the line slides it, a click outside hides them', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed, o = new ed.fabric.Rect({ left: 50, top: 50, width: 200, height: 100, fill: '#888888', strokeWidth: 0 });
+    o.set({ id: 'gh', role: 'shape', name: 'G' }); ed.fc.add(o); ed.commit('add'); ed.fc.setActiveObject(o);
+    ed.setToolOptions({ gradientType: 'linear', gradientStops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] });
+    ed.setTool('gradient');
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  const drag = async (a, b) => { await page.mouse.move(...at(...a)); await page.mouse.down(); await page.mouse.move(...at(...b), { steps: 6 }); await page.mouse.up(); };
+  const axis = () => page.evaluate(() => { const g = window.__ed._gradAxis; return g && [g.from.x, g.from.y, g.to.x, g.to.y].map(Math.round); });
+  const colors = (pts) => page.evaluate((pts) => {
+    const ed = window.__ed; ed.fc.renderAll();
+    const el = ed.fc.toCanvasElement(1 / ed.fc.getZoom(), { left: ed.fc.viewportTransform[4], top: ed.fc.viewportTransform[5], width: ed.W * ed.fc.getZoom(), height: ed.H * ed.fc.getZoom() });
+    const k = el.width / ed.W, c = el.getContext('2d');
+    return pts.map(([x, y]) => Array.from(c.getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data.slice(0, 3)));
+  }, pts);
+
+  await drag([50, 100], [250, 100]);   // left edge -> right edge
+  assert.deepEqual(await axis(), [50, 100, 250, 100], 'handles stay after mouse-up');
+  // the ramp starts and ends exactly where it was dragged (it used to be offset by half the shape)
+  const [l, m, r] = await colors([[52, 100], [150, 100], [248, 100]]);
+  assert.ok(l[0] > 240 && l[2] < 15, 'red at the start: ' + l);
+  assert.ok(Math.abs(m[0] - m[2]) < 20 && m[0] > 100, 'even mix in the middle: ' + m);
+  assert.ok(r[2] > 240 && r[0] < 15, 'blue at the end: ' + r);
+
+  await drag([250, 100], [250, 140]);   // grab the end handle
+  assert.deepEqual(await axis(), [50, 100, 250, 140]);
+  await drag([150, 120], [150, 90]);    // grab the line, slide it up
+  assert.deepEqual(await axis(), [50, 70, 250, 110]);
+  const c = await page.evaluate(() => { const k = window.__ed._byId('gh').fill.coords; return [k.x1, k.y1, k.x2, k.y2].map(Math.round); });
+  assert.deepEqual(c, [0, 20, 200, 60], 'fill coords are the object-space axis (top-left origin)');
+
+  await page.mouse.click(...at(330, 250));   // outside the shape
+  assert.equal(await axis(), null, 'click outside hides the handles');
+  assert.deepEqual(await page.evaluate(() => window.__ed._byId('gh').fill.coords.y1), 20, 'and leaves the fill alone');
+
+  // coming back to the tool with the shape selected shows its handles again
+  await page.evaluate(() => { const ed = window.__ed; ed.setTool('select'); ed.fc.setActiveObject(ed._byId('gh')); ed.setTool('gradient'); });
+  assert.deepEqual(await axis(), [50, 70, 250, 110]);
+  // and a plain click inside (no drag) changes nothing
+  await page.mouse.click(...at(120, 120));
+  assert.deepEqual(await axis(), [50, 70, 250, 110]);
+});
+
+test('browser: gradient targets the shape under the pointer — after clicking outside, dragging on a shape fills it again without reselecting', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed;
+    for (const [id, l] of [['gA', 20], ['gB', 220]]) { const o = new ed.fabric.Rect({ left: l, top: 60, width: 150, height: 120, fill: '#888888', strokeWidth: 0 }); o.set({ id, role: 'shape', name: id }); ed.fc.add(o); }
+    ed.commit('add'); ed.fc.setActiveObject(ed._byId('gA'));
+    ed.setToolOptions({ gradientType: 'linear', gradientStops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] });
+    ed.setTool('gradient');
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  const drag = async (a, b) => { await page.mouse.move(...at(...a)); await page.mouse.down(); await page.mouse.move(...at(...b), { steps: 6 }); await page.mouse.up(); };
+  const st = () => page.evaluate(() => { const ed = window.__ed, g = (id) => !!(ed._byId(id).fill && ed._byId(id).fill.type);
+    return { A: g('gA'), B: g('gB'), on: ed._gradEdit && ed._gradEdit.id, paint: ed.fc.getObjects().filter(o => o.role === 'paint').length }; });
+
+  await drag([30, 120], [160, 120]);
+  assert.deepEqual(await st(), { A: true, B: false, on: 'gA', paint: 0 });
+  await page.mouse.click(...at(195, 260));   // empty canvas
+  assert.deepEqual(await st(), { A: true, B: false, on: null, paint: 0 });
+  await drag([40, 90], [150, 150]);          // straight back onto the shape: it's the target again
+  assert.deepEqual(await st(), { A: true, B: false, on: 'gA', paint: 0 }, 'no raster paint, no reselect needed');
+  await drag([230, 120], [360, 120]);        // a different shape: handles move to it
+  assert.deepEqual(await st(), { A: true, B: true, on: 'gB', paint: 0 });
+  await page.mouse.click(...at(195, 260));
+  await page.mouse.click(...at(90, 120));    // plain click on a gradient shape shows its handles
+  assert.equal((await st()).on, 'gA');
+  await page.mouse.click(...at(195, 260));
+  await drag([180, 220], [300, 280]);        // drag on empty canvas still paints
+  assert.deepEqual(await st(), { A: true, B: true, on: null, paint: 1 });
+});
+
+test('browser: clicking a gradient colour swatch asks for a colour picker for THAT stop; dragging a middle swatch slides it', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed, o = new ed.fabric.Rect({ left: 50, top: 60, width: 300, height: 150, fill: '#888', strokeWidth: 0 });
+    o.set({ id: 'sw', role: 'shape', name: 'S' }); ed.fc.add(o); ed.commit('add');
+    ed.setTool('gradient');
+    ed.setToolOptions({ gradientType: 'linear', gradientStops: [{ offset: 1, color: '#0000ff' }, { offset: 0, color: '#ff0000' }, { offset: 0.5, color: '#00ff00' }] });
+    window.__picks = []; ed.on('gradientstoppick', e => window.__picks.push(e));
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  await page.mouse.move(...at(60, 130)); await page.mouse.down(); await page.mouse.move(...at(340, 130), { steps: 6 }); await page.mouse.up();
+  const sw = (i) => page.evaluate((i) => window.__ed._gradSwatchPoint(i), i);
+  const s0 = await sw(0);                                   // the END stop, listed first
+  await page.mouse.click(...at(s0.x, s0.y));
+  const e = await page.evaluate(() => window.__picks.at(-1));
+  assert.equal(e.index, 0); assert.equal(e.color, '#0000ff');
+  await page.evaluate(() => window.__ed.setGradientStopColor(0, '#ffff00'));   // what the shell's picker calls
+  const shape = await page.evaluate(() => window.__ed._byId('sw').fill.colorStops.map(s => s.offset + ':' + s.color).join(' '));
+  assert.equal(shape, '0:#ff0000 0.5:#00ff00 1:#ffff00', 'only that stop recoloured, on the shape too');
+  const m = await sw(2);
+  await page.mouse.move(...at(m.x, m.y)); await page.mouse.down(); await page.mouse.move(...at(m.x - 70, m.y), { steps: 5 }); await page.mouse.up();
+  const off = await page.evaluate(() => window.__ed.toolOpts.gradientStops[2].offset);
+  assert.ok(off > 0.2 && off < 0.3, 'middle stop slid: ' + off);
+  assert.equal(await page.evaluate(() => window.__picks.length), 1, 'a drag does not open the picker');
+});
+
+test('browser: a magic wand click shows a busy ring at the pointer until the pick lands', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed;
+    const c = new ed.fabric.Circle({ left: 120, top: 80, radius: 60, fill: '#b04020', strokeWidth: 0 }); c.set({ id: 'c', role: 'shape' }); ed.fc.add(c); ed.commit('add');
+    ed.setTool('magicwand');
+    window.__busy = []; ed.on('pickbusy', b => window.__busy.push(b && [Math.round(b.x), Math.round(b.y)]));
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  await page.mouse.click(box.x + vt[4] + 180 * vt[0], box.y + vt[5] + 140 * vt[3]);
+  assert.deepEqual(await page.evaluate(() => window.__busy[0]), [180, 140], 'ring appears at the click');
+  await page.waitForFunction(() => !window.__ed.pickBusy, null, { timeout: 20000 });
+  assert.equal(await page.evaluate(() => window.__busy.at(-1)), null, 'and clears when the pick settles');
+  assert.ok(await page.evaluate(() => !!window.__ed.selection));
+});
+
+test('browser: object/hover select pick from the CURRENT scene after the document changes (no stale outline off the artboard)', async () => {
+  const open = (w, h) => page.evaluate(async ([w, h]) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+    x.fillStyle = '#ece6c6'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#b04020'; x.fillRect(w * 0.4, h * 0.4, w * 0.2, h * 0.2);   // a flat block in the middle
+    await window.__ed.openImage(c.toDataURL('image/png'));
+  }, [w, h]);
+  await open(1200, 1200);
+  await page.evaluate(() => window.__ed.setTool('objectselect'));
+  await page.waitForFunction(() => window.__ed._objRegion && window.__ed._objRegion.width === 1200, null, { timeout: 15000 });
+  await open(400, 300);   // a different, smaller document while the tool stays active
+  const r = await page.evaluate(async () => { const ed = window.__ed; await ed.selectObjectAt({ x: 200, y: 150 }); const s = ed.selection;
+    const all = s.kind === 'multipoly' ? [].concat(...s.polys) : s.pts || [{ x: s.x, y: s.y }, { x: s.x + s.w, y: s.y + s.h }];
+    return [Math.min(...all.map(q => q.x)), Math.min(...all.map(q => q.y)), Math.max(...all.map(q => q.x)), Math.max(...all.map(q => q.y))].map(Math.round); });
+  // the block is 160..240 x 120..180 on the new 400x300 artboard
+  assert.ok(r[0] >= 150 && r[1] >= 110 && r[2] <= 250 && r[3] <= 190, 'picked the block on the new document: ' + r);
+  assert.equal(await page.evaluate(() => window.__ed._objRegion.width), 400, 'snapshot refreshed to the new artboard');
+});
+
+/* ── border options (stroke.js): style, dash/gap, position, caps, join ─────────────────── */
+test('browser: setStroke style keys — dashed/dotted dash arrays, dotted keeps its gap when the width changes, caps/join', async () => {
+  const r = await page.evaluate(() => {
+    const ed = window.__ed;
+    const o = new ed.fabric.Rect({ left: 40, top: 40, width: 120, height: 80, fill: '#fc0', stroke: '#000', strokeWidth: 4 }); o.set({ id: 'S', role: 'shape' });
+    ed.fc.add(o); ed.commit('add'); ed.activate('S');
+    const out = {};
+    ed.setStroke({ style: 'dashed' }); out.dashedDefault = o.strokeDashArray.slice();
+    ed.setStroke({ dash: 10, gap: 3 }); out.dashed = o.strokeDashArray.slice();
+    ed.setStroke({ style: 'dotted', gap: 5 }); out.dotted = o.strokeDashArray.slice(); out.dotCap = o.strokeLineCap;
+    ed.setStroke({ width: 8 }); out.dottedWider = o.strokeDashArray.slice(); out.info = ed.getStroke();
+    ed.setStroke({ cap: 'square' }); out.capIgnoredWhileDotted = o.strokeLineCap;
+    ed.setStroke({ style: 'solid' }); out.solid = o.strokeDashArray; out.solidCap = o.strokeLineCap;
+    ed.setStroke({ cap: 'square', join: 'bevel' }); out.cap = o.strokeLineCap; out.join = o.strokeLineJoin;
+    ed.setStroke({ cap: 'bogus', join: 'nope' }); out.capAfterJunk = o.strokeLineCap;
+    return out;
+  });
+  assert.deepEqual(r.dashedDefault, [12, 8], 'defaults sized to the width');
+  assert.deepEqual(r.dashed, [10, 3]);
+  assert.deepEqual(r.dotted, [0, 9], 'zero-length dash, pitch = width + gap'); assert.equal(r.dotCap, 'round');
+  assert.deepEqual(r.dottedWider, [0, 13], 'the gap stays 5 when the width goes 4 → 8');
+  assert.equal(r.info.style, 'dotted'); assert.equal(r.info.gap, 5);
+  assert.equal(r.capIgnoredWhileDotted, 'round');
+  assert.equal(r.solid, null); assert.equal(r.solidCap, 'butt', 'leaving dotted drops the round caps it forced');
+  assert.equal(r.cap, 'square'); assert.equal(r.join, 'bevel'); assert.equal(r.capAfterJunk, 'square');
+});
+
+test('browser: border position paints inside / outside the shape edge and survives undo + save/restore', async () => {
+  const px = await page.evaluate(async () => {
+    const ed = window.__ed;
+    // white artboard; a red-bordered rect with a transparent fill, its edge at x=100
+    const o = new ed.fabric.Rect({ left: 100, top: 100, width: 100, height: 100, fill: 'rgba(0,0,0,0)', stroke: '#ff0000', strokeWidth: 10, strokeUniform: false }); o.set({ id: 'P', role: 'shape' });
+    ed.fc.add(o); ed.commit('add'); ed.activate('P');
+    // Fabric's rect box includes the stroke: geometry edge is left + strokeWidth/2 = 105
+    const red = async () => {
+      const img = new Image(); img.src = ed.exportPNG(); await img.decode();
+      const c = document.createElement('canvas'); c.width = ed.W; c.height = ed.H; const x = c.getContext('2d'); x.drawImage(img, 0, 0, ed.W, ed.H);
+      const at = (X) => { const d = x.getImageData(X, 150, 1, 1).data; return d[0] > 200 && d[1] < 80; };
+      return { out: at(99), edgeOut: at(103), edgeIn: at(107), in: at(113) };
+    };
+    const res = {};
+    res.center = await red();
+    ed.setStroke({ position: 'inside' }); res.inside = await red();
+    ed.setStroke({ position: 'outside' }); res.outside = await red();
+    ed.undo(); await new Promise(r => setTimeout(r, 200));
+    res.afterUndo = ed._byId('P').strokePosition || 'center';
+    ed.redo(); await new Promise(r => setTimeout(r, 200));
+    const json = ed.toJSON();
+    res.serialized = json.includes('"strokePosition":"outside"');
+    ed.loadJSON(json); await new Promise(r => setTimeout(r, 400));
+    res.reloaded = await red();
+    res.info = (ed.activate('P'), ed.getStroke());
+    return res;
+  });
+  assert.deepEqual(px.center, { out: false, edgeOut: true, edgeIn: true, in: false }, 'centre straddles the edge');
+  assert.deepEqual(px.inside, { out: false, edgeOut: false, edgeIn: true, in: true }, 'inside: all 10px within the edge');
+  assert.deepEqual(px.outside, { out: true, edgeOut: true, edgeIn: false, in: false }, 'outside: all 10px beyond the edge, transparent fill shows no stroke');
+  assert.equal(px.afterUndo, 'inside', 'undo steps back one position change');
+  assert.ok(px.serialized, 'strokePosition is serialized');
+  assert.deepEqual(px.reloaded, px.outside, 'and still paints outside after a reload');
+  assert.equal(px.info.position, 'outside'); assert.equal(px.info.canPosition, true);
+});
+
+test('browser: fill / border eye toggles hide the paint without losing it (gradient, dash), undo, save/restore, edit re-shows', async () => {
+  const r = await page.evaluate(async () => {
+    const ed = window.__ed;
+    const o = new ed.fabric.Rect({ left: 100, top: 100, width: 100, height: 100, fill: '#00ff00', stroke: '#ff0000', strokeWidth: 10, strokeDashArray: [40, 4] }); o.set({ id: 'E', role: 'shape' });
+    ed.fc.add(o); ed.commit('add'); ed.activate('E');
+    ed.setShapeGradient([{ offset: 0, color: '#00ff00' }, { offset: 1, color: '#00ff00' }], 'linear', 0);
+    // pixel probes: middle of the fill, and on the border's left edge (geometry edge at x=105)
+    const probe = async () => {
+      const img = new Image(); img.src = ed.exportPNG(); await img.decode();
+      const c = document.createElement('canvas'); c.width = ed.W; c.height = ed.H; const x = c.getContext('2d'); x.drawImage(img, 0, 0, ed.W, ed.H);
+      const at = (X, Y) => [...x.getImageData(X, Y, 1, 1).data.slice(0, 3)];
+      const f = at(150, 150), b = at(105, 120);
+      return { fill: f[1] > 200 && f[0] < 80, border: b[0] > 200 && b[1] < 80, layerFill: ed.layers().find(l => l.id === 'E').fill };
+    };
+    const res = { both: await probe() };
+    ed.setFillVisible(false); res.noFill = await probe(); res.fillVisible = ed.isFillVisible();
+    ed.setStrokeVisible(false); res.none = await probe(); res.strokeVisible = ed.getStroke().visible;
+    res.kept = { gradient: !!(o.fill && o.fill.colorStops), dash: o.strokeDashArray && o.strokeDashArray.slice(), width: o.strokeWidth };
+    const json = ed.toJSON();
+    res.serialized = json.includes('"fillOff":true') && json.includes('"strokeOff":true');
+    ed.loadJSON(json); await new Promise(r => setTimeout(r, 400));
+    res.reloaded = await probe();
+    ed.undo(); await new Promise(r => setTimeout(r, 300));
+    res.undone = await probe();   // one undo: the border comes back, the fill stays hidden
+    ed.activate('E'); ed.setFillVisible(true); res.shown = await probe();
+    ed.setStrokeVisible(false); ed.setStroke({ width: 6 }); res.editShows = ed._byId('E').strokeOff;
+    return res;
+  });
+  assert.deepEqual(r.both, { fill: true, border: true, layerFill: null }, 'gradient fill has no swatch to begin with');
+  assert.equal(r.noFill.fill, false); assert.equal(r.noFill.border, true); assert.equal(r.fillVisible, false);
+  assert.equal(r.none.fill, false); assert.equal(r.none.border, false); assert.equal(r.strokeVisible, false);
+  assert.deepEqual(r.kept, { gradient: true, dash: [40, 4], width: 10 }, 'the hidden paint is all still there');
+  assert.ok(r.serialized, 'fillOff / strokeOff are serialized');
+  assert.deepEqual(r.reloaded, r.none, 'still hidden after a reload');
+  assert.equal(r.undone.fill, false); assert.equal(r.undone.border, true);
+  assert.equal(r.shown.fill, true, 'toggling back on restores the gradient fill');
+  assert.equal(r.editShows, false, 'editing a hidden border shows it again');
+});
+
+test('browser: a hidden solid fill drops its swatch from layers()', async () => {
+  const r = await page.evaluate(() => {
+    const ed = window.__ed;
+    const o = new ed.fabric.Rect({ left: 10, top: 10, width: 50, height: 50, fill: '#123456' }); o.set({ id: 'Q', role: 'shape' });
+    ed.fc.add(o); ed.commit('add'); ed.activate('Q');
+    const before = ed.layers().find(l => l.id === 'Q').fill;
+    ed.setFillVisible(false);
+    return [before, ed.layers().find(l => l.id === 'Q').fill, o.fill];
+  });
+  assert.deepEqual(r, ['#123456', null, '#123456']);
+});
+
+/* ── right-click menu (contextmenu.js + Editor#openContextMenu) ─────────────────────────── */
+const ctxSetup = () => page.evaluate(() => {
+  const ed = window.__ed;
+  const r = new ed.fabric.Rect({ left: 40, top: 40, width: 100, height: 80, fill: '#f60', strokeWidth: 0 }); r.set({ id: 'R', role: 'shape', name: 'Box' }); ed.fc.add(r);
+  const c = new ed.fabric.Circle({ left: 220, top: 120, radius: 50, fill: '#06f', strokeWidth: 0 }); c.set({ id: 'C', role: 'shape', name: 'Circle' }); ed.fc.add(c);
+  ed.commit('add'); ed.setTool('select'); ed.fc.discardActiveObject();
+  window.__menu = (x, y) => { const ev = ed.openContextMenu({ x, y }, { x: 0, y: 0 }); return ev.sections.flat(); };
+  window.__run = (x, y, id, sub) => { const it = window.__menu(x, y).find(i => i.id === id); return (sub ? it.items.find(i => i.id === sub) : it).run(); };
+});
+
+test('browser: right-click selects the layer under the pointer and builds a layer menu; empty canvas gets the canvas menu', async () => {
+  await ctxSetup();
+  const ids = await page.evaluate(() => window.__menu(90, 80).map(i => i.id));
+  assert.equal(await page.evaluate(() => window.__ed.fc.getActiveObject().id), 'R', 'right-clicked layer is selected');
+  for (const id of ['copy', 'cut', 'paste-here', 'duplicate', 'delete', 'select-layer', 'front', 'back', 'flip-h', 'align', 'toggle-visible', 'toggle-lock']) assert.ok(ids.includes(id), 'layer menu has ' + id);
+  assert.ok(!ids.includes('ungroup') && !ids.includes('group'));
+  const canvas = await page.evaluate(() => window.__menu(380, 280).map(i => i.id));
+  assert.deepEqual(canvas, ['paste-here', 'select-all', 'undo', 'redo']);
+  assert.equal(await page.evaluate(() => window.__ed.fc.getActiveObject()), null, 'empty-canvas right-click clears the selection');
+});
+
+test('browser: right-click inside a multi-selection keeps it and offers Group; a group offers Ungroup', async () => {
+  await ctxSetup();
+  await page.evaluate(() => window.__ed.selectAllLayers());
+  const ids = await page.evaluate(() => window.__menu(260, 160).map(i => i.id));
+  assert.equal(await page.evaluate(() => window.__ed.fc.getActiveObject().type), 'activeSelection', 'still a multi-selection');
+  assert.ok(ids.includes('group'));
+  await page.evaluate(() => window.__run(260, 160, 'group'));
+  const ids2 = await page.evaluate(() => window.__menu(260, 160).map(i => i.id));
+  assert.ok(ids2.includes('ungroup'));
+});
+
+test('browser: a right mouse button never reaches the active tool (no pen point, no shape)', async () => {
+  await page.evaluate(() => window.__ed.setTool('pen'));
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  const at = (x, y) => [box.x + vt[4] + x * vt[0], box.y + vt[5] + y * vt[3]];
+  await page.mouse.click(...at(100, 100), { button: 'right' });
+  assert.equal(await page.evaluate(() => window.__ed._penBuild), null);
+  await page.evaluate(() => window.__ed.setTool('rect'));
+  await page.mouse.click(...at(150, 150), { button: 'right' });
+  assert.equal(await page.evaluate(() => window.__ed.fc.getObjects().filter(o => o.type === 'rect').length), 0);
+});
+
+test('browser: right-click on a marquee selection → Select object shrinks it to the objects inside (all of them, not the backdrop)', async () => {
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 400; c.height = 300; const x = c.getContext('2d');
+    x.fillStyle = '#ece6c6'; x.fillRect(0, 0, 400, 300);
+    x.fillStyle = '#a9c24a'; x.fillRect(30, 120, 340, 170);   // the panel the products sit on
+    x.fillStyle = '#e07a6a'; x.fillRect(90, 160, 70, 100);    // product 1
+    x.fillStyle = '#2f7fc9'; x.fillRect(220, 170, 80, 90);    // product 2
+    x.fillStyle = '#ffffff'; x.fillRect(100, 180, 50, 20); x.fillRect(235, 190, 50, 20);   // labels
+    await window.__ed.openImage(c.toDataURL('image/png'));
+  });
+  const ids = await page.evaluate(() => {
+    const ed = window.__ed; ed.setTool('marquee');
+    ed.selection = { kind: 'rect', x: 60, y: 140, w: 270, h: 140 };
+    return ed.openContextMenu({ x: 200, y: 200 }, { x: 0, y: 0 }).sections.flat().map(i => i.id);
+  });
+  assert.equal(ids[0], 'sel-object', 'Select object leads the pixel-selection menu');
+  const r = await page.evaluate(async () => {
+    const ed = window.__ed;
+    const res = await ed.openContextMenu({ x: 200, y: 200 }, { x: 0, y: 0 }).sections.flat().find(i => i.id === 'sel-object').run();
+    const s = ed.selection, rings = s.kind === 'multipoly' ? s.polys : [s.pts];
+    const area = pl => Math.abs(pl.reduce((a, p, i) => { const q = pl[(i + 1) % pl.length]; return a + p.x * q.y - q.x * p.y; }, 0) / 2);
+    const bb = pl => [Math.min(...pl.map(p => p.x)), Math.min(...pl.map(p => p.y)), Math.max(...pl.map(p => p.x)), Math.max(...pl.map(p => p.y))].map(Math.round);
+    return { status: res.status, rings: rings.map(bb).sort((a, b) => a[0] - b[0]), area: rings.reduce((a, pl) => a + area(pl), 0) };
+  });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.rings.length, 2, 'one ring per product: ' + JSON.stringify(r.rings));
+  const near = (got, want) => got.every((v, i) => Math.abs(v - want[i]) <= 6);
+  assert.ok(near(r.rings[0], [90, 160, 160, 260]), 'hugs product 1: ' + r.rings[0]);
+  assert.ok(near(r.rings[1], [220, 170, 300, 260]), 'hugs product 2: ' + r.rings[1]);
+  assert.ok(r.area < 270 * 140 * 0.5, 'the green backdrop is not selected: ' + r.area);
+
+  // Shift-added rings that overlap are a union (nonzero), not even-odd: product 1's right edge
+  // sits inside the overlap and must still be selected.
+  const pick = (sel) => page.evaluate(async (sel) => {
+    const ed = window.__ed; ed.selection = sel;
+    const res = await ed.selectObjectsInSelection();
+    const s = ed.selection, rings = res.status === 'ok' ? (s.kind === 'multipoly' ? s.polys : [s.pts]) : [];
+    const inside = (pl, x, y) => { let c = false; for (let i = 0, j = pl.length - 1; i < pl.length; j = i++) { const a = pl[i], b = pl[j]; if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) c = !c; } return c; };
+    const bb = pl => [Math.min(...pl.map(p => p.x)), Math.min(...pl.map(p => p.y)), Math.max(...pl.map(p => p.x)), Math.max(...pl.map(p => p.y))].map(Math.round);
+    return { status: res.status, rings: rings.map(bb).sort((a, b) => a[0] - b[0]),
+      p1: rings.some(pl => inside(pl, 125, 230)), p2: rings.some(pl => inside(pl, 260, 230)) };
+  }, sel);
+  const ring = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const ov = await pick({ kind: 'multipoly', polys: [ring(60, 140, 200, 280), ring(150, 140, 330, 280)] });
+  assert.equal(ov.status, 'ok');
+  assert.ok(ov.rings.some(b => near(b, [90, 160, 160, 260])), 'product 1 whole despite the overlap: ' + JSON.stringify(ov.rings));
+
+  // An inverted selection searches everything EXCEPT its rings.
+  const inv = await pick({ kind: 'rect', x: 75, y: 145, w: 100, h: 130, invert: true });
+  assert.equal(inv.status, 'ok');
+  assert.ok(!inv.p1, 'product 1 is outside an inverted selection around it');
+  assert.ok(inv.p2, 'product 2 is found in the inverted area');
+
+  // A slipped-click-sized selection is refused up front instead of erroring in the worker.
+  const tiny = await page.evaluate(() => { window.__ed.selection = { kind: 'rect', x: 100, y: 200, w: 5, h: 5 }; return window.__ed.selectObjectsInSelection(); });
+  assert.equal(tiny.reason, 'no_match');
+});
+
+test('browser: menu actions — paste here, paste to replace (one undo step), arrange, hide, lock, cut', async () => {
+  await ctxSetup();
+  await page.evaluate(async () => { window.__menu(90, 80); await window.__ed.copySelection(); });
+  await page.evaluate(() => window.__run(330, 250, 'paste-here'));
+  await page.waitForTimeout(100);
+  const c = await page.evaluate(() => { const p = window.__ed.fc.getActiveObject().getCenterPoint(); return [Math.round(p.x), Math.round(p.y)]; });
+  assert.deepEqual(c, [330, 250], 'pasted centred on the right-click point');
+  // paste to replace the circle with the box: one undo brings the circle back
+  const before = await page.evaluate(() => window.__ed.history.depth().past);
+  await page.evaluate(() => window.__run(270, 170, 'paste-replace')); await page.waitForTimeout(100);
+  const after = await page.evaluate(() => ({ circle: !!window.__ed._byId('C'), past: window.__ed.history.depth().past, n: window.__ed.fc.getObjects().length }));
+  assert.equal(after.circle, false); assert.equal(after.past, before + 1, 'one undo step');
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(200);
+  assert.ok(await page.evaluate(() => !!window.__ed._byId('C')), 'undo restores the replaced layer');
+  // arrange: send the box to the back, bring it to the front
+  await page.evaluate(() => window.__run(90, 80, 'back'));
+  assert.equal(await page.evaluate(() => window.__ed.fc.getObjects()[0].id), 'R');
+  await page.evaluate(() => window.__run(90, 80, 'front'));
+  assert.equal(await page.evaluate(() => window.__ed.fc.getObjects().at(-1).id), 'R');
+  // hide, then lock -> the locked layer's menu offers Unlock
+  await page.evaluate(() => window.__run(270, 170, 'toggle-lock'));
+  assert.equal(await page.evaluate(() => window.__ed._byId('C').locked), true);
+  assert.deepEqual(await page.evaluate(() => window.__menu(270, 170).map(i => i.id)), ['unlock', 'toggle-visible', 'paste-here']);
+  await page.evaluate(() => window.__run(270, 170, 'unlock'));
+  assert.equal(await page.evaluate(() => window.__ed._byId('C').locked), false);
+  await page.evaluate(() => window.__run(270, 170, 'toggle-visible'));
+  assert.equal(await page.evaluate(() => window.__ed._byId('C').visible), false);
+  // cut: gone from the canvas, on the clipboard
+  await page.evaluate(() => window.__run(90, 80, 'cut')); await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => !!window.__ed._byId('R')), false);
+  assert.ok(await page.evaluate(() => !!window.__ed._clipboard));
+});
+
+test('browser: Figma arrange/flip/hide/lock shortcuts act on the selection', async () => {
+  await ctxSetup();
+  await page.evaluate(() => { const ed = window.__ed; ed.fc.setActiveObject(ed._byId('C')); });
+  await page.keyboard.press('[');
+  assert.equal(await page.evaluate(() => window.__ed.fc.getObjects()[0].id), 'C', '[ sends to back');
+  await page.keyboard.press(']');
+  assert.equal(await page.evaluate(() => window.__ed.fc.getObjects().at(-1).id), 'C', '] brings to front');
+  await page.keyboard.press('Shift+H');
+  assert.equal(await page.evaluate(() => window.__ed._byId('C').flipX), true, '⇧H flips horizontally');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+L' : 'Control+Shift+L');
+  assert.equal(await page.evaluate(() => window.__ed._byId('C').locked), true, '⇧⌘L locks');
+});
+
+/* ── QA / review regressions ─────────────────────────────────────────────────────────────── */
+test('browser: tool letters go to their own tool and only cycle through unlettered siblings', async () => {
+  const press = async (k) => { await page.keyboard.press(k); return page.evaluate(() => window.__ed.tool); };
+  // install the shortcuts the way the shells do — with their rail groups
+  await page.evaluate(async () => {
+    const { installKeybindings } = await import('/packages/core/src/index.js');
+    window.__stopKeys(); window.__stopKeys = installKeybindings(window.__ed, document, { toolGroups: [
+      ['select', 'hand'], ['marquee', 'marquee-ellipse', 'lasso', 'lasso-poly', 'lasso-mag', 'wand', 'objectselect-bbox'],
+      ['rect', 'ellipse', 'line', 'triangle', 'polygon', 'star']] });
+  });
+  await page.evaluate(() => window.__ed.setTool('select'));
+  assert.equal(await press('v'), 'select', 'V on Select stays Select (Hand has its own H)');
+  await page.evaluate(() => window.__ed.setTool('marquee'));
+  assert.equal(await press('l'), 'lasso', 'L goes to Lasso, not the next marquee');
+  await page.evaluate(() => window.__ed.setTool('select'));
+  assert.equal(await press('m'), 'marquee'); assert.equal(await press('m'), 'marquee-ellipse');
+  assert.equal(await press('u'), 'rect'); assert.equal(await press('u'), 'ellipse');
+});
+
+test('browser: paint bucket floods the clicked colour area only; with a selection it fills the selection', async () => {
+  await page.evaluate(() => {
+    const ed = window.__ed, F = ed.fabric;
+    const a = new F.Rect({ left: 0, top: 0, width: 400, height: 150, fill: '#3366cc', strokeWidth: 0 }); a.set({ id: 'top', role: 'shape' });
+    const b2 = new F.Rect({ left: 0, top: 150, width: 400, height: 150, fill: '#33aa55', strokeWidth: 0 }); b2.set({ id: 'bot', role: 'shape' });
+    ed.fc.add(a); ed.fc.add(b2); ed.commit('add'); ed.setToolOptions({ color: '#ff0000', fill: '#ff0000' }); ed.setTool('bucket');
+  });
+  const box = await page.locator('#cv').boundingBox();
+  const vt = await page.evaluate(() => window.__ed.fc.viewportTransform.slice());
+  await page.mouse.click(box.x + vt[4] + 200 * vt[0], box.y + vt[5] + 220 * vt[3]);
+  const px = await page.evaluate(() => { const ed = window.__ed; ed.fc.renderAll(); const el = ed.fc.toCanvasElement(1 / ed.fc.getZoom(), { left: ed.fc.viewportTransform[4], top: ed.fc.viewportTransform[5], width: ed.W * ed.fc.getZoom(), height: ed.H * ed.fc.getZoom() }); const k = el.width / ed.W, g = (x, y) => Array.from(el.getContext('2d').getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data.slice(0, 3)).join(','); return [g(200, 220), g(200, 60)]; });
+  assert.deepEqual(px, ['255,0,0', '51,102,204'], 'bottom band filled, top band untouched');
+});
+
+test('browser: selection changes are undone before the document (⌘Z after Expand/Contract keeps the image)', async () => {
+  const r = await page.evaluate(async () => {
+    const ed = window.__ed;
+    ed.selection = { kind: 'rect', x: 50, y: 50, w: 100, h: 100 }; ed._emit('selection', ed.selection);
+    ed.selection = { kind: 'rect', x: 40, y: 40, w: 120, h: 120 }; ed._emit('selection', ed.selection);
+    ed.clearSelection();
+    const n = ed.fc.getObjects().length;
+    ed.undo(); const a = ed.selection && ed.selection.w;
+    ed.undo(); const b = ed.selection && ed.selection.w;
+    ed.redo(); const c = ed.selection && ed.selection.w;
+    return { a, b, c, docSame: ed.fc.getObjects().length === n };
+  });
+  assert.deepEqual(r, { a: 120, b: 100, c: 120, docSame: true });
+});
+
+test('browser: send to back stays above the background; locked layers ignore arrows/Delete', async () => {
+  const r = await page.evaluate(() => {
+    const ed = window.__ed, F = ed.fabric;
+    const bg = new F.Rect({ left: 0, top: 0, width: 400, height: 300, fill: '#eee' }); bg.set({ id: 'BG', role: 'bg' }); ed.fc.add(bg);
+    const s = new F.Rect({ left: 50, top: 50, width: 80, height: 80, fill: '#f00' }); s.set({ id: 'S', role: 'shape' }); ed.fc.add(s);
+    ed.commit('add'); ed.setTool('select'); ed.fc.setActiveObject(s); ed.arrangeSelection('bottom');
+    return ed.fc.getObjects().map(o => o.id);
+  });
+  assert.deepEqual(r, ['BG', 'S']);
+  await page.evaluate(() => { const ed = window.__ed; ed.setLayer('S', { locked: true }); ed.activate('S'); });
+  await page.keyboard.press('ArrowRight'); await page.keyboard.press('Backspace');
+  assert.deepEqual(await page.evaluate(() => { const o = window.__ed._byId('S'); return o && Math.round(o.left); }), 50);
+});
+
+test('browser: Open image starts a new document (old layers go; one undo brings them back)', async () => {
+  await page.evaluate(() => { const ed = window.__ed, r = new ed.fabric.Rect({ left: 10, top: 10, width: 50, height: 50, fill: '#000' }); r.set({ id: 'OLD', role: 'shape' }); ed.fc.add(r); ed.commit('add'); });
+  await page.evaluate(async () => { const c = document.createElement('canvas'); c.width = 200; c.height = 100; c.getContext('2d').fillRect(0, 0, 200, 100); await window.__ed.openImage(c.toDataURL()); });
+  assert.deepEqual(await page.evaluate(() => [window.__ed.fc.getObjects().length, !!window.__ed._byId('OLD'), window.__ed.W]), [1, false, 200]);
+  await page.evaluate(() => window.__ed.undo()); await page.waitForTimeout(300);
+  assert.ok(await page.evaluate(() => !!window.__ed._byId('OLD')));
 });

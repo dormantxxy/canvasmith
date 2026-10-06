@@ -22,9 +22,33 @@ export const FONT_GROUPS = [
     ['Inter', 'Inter, sans-serif'], ['Roboto', 'Roboto, sans-serif'], ['Poppins', 'Poppins, sans-serif'],
     ['Playfair Display', '"Playfair Display", serif'], ['Merriweather', 'Merriweather, serif'],
     ['Roboto Mono', '"Roboto Mono", monospace'], ['Bebas Neue', '"Bebas Neue", sans-serif'],
+    ['Montserrat', 'Montserrat, sans-serif'], ['Oswald', 'Oswald, sans-serif'], ['Nunito', 'Nunito, sans-serif'],
+  ] },
+  { label: 'Display & Script', fonts: [
+    ['Anton', 'Anton, sans-serif'], ['Archivo Black', '"Archivo Black", sans-serif'], ['Fredoka', 'Fredoka, sans-serif'],
+    ['Baloo 2', '"Baloo 2", sans-serif'], ['Lilita One', '"Lilita One", sans-serif'], ['Luckiest Guy', '"Luckiest Guy", sans-serif'],
+    ['Pacifico', 'Pacifico, cursive'], ['Lobster', 'Lobster, cursive'], ['Dancing Script', '"Dancing Script", cursive'],
   ] },
 ];
-export const GOOGLE_FONT_FAMILIES = ['Inter', 'Roboto', 'Poppins', 'Playfair+Display', 'Merriweather', 'Roboto+Mono', 'Bebas+Neue'];
+export const GOOGLE_FONT_FAMILIES = ['Inter', 'Roboto', 'Poppins', 'Playfair+Display', 'Merriweather', 'Roboto+Mono', 'Bebas+Neue',
+  'Montserrat', 'Oswald', 'Nunito', 'Anton', 'Archivo+Black', 'Fredoka', 'Baloo+2', 'Lilita+One', 'Luckiest+Guy', 'Pacifico', 'Lobster', 'Dancing+Script'];
+/* Fonts convert-to-layers may pick when matching detected lettering (see the AI detectRegions
+   prompt and Editor#_buildRegionLayer): the Google set plus the always-available system fonts,
+   each with a one-word look the model can match against. */
+export const MATCH_FONTS = [
+  ['Inter', 'clean sans'], ['Roboto', 'neutral sans'], ['Poppins', 'geometric sans'], ['Montserrat', 'wide geometric sans'],
+  ['Nunito', 'rounded sans'], ['Oswald', 'condensed sans'], ['Bebas Neue', 'tall condensed caps'], ['Anton', 'heavy condensed'],
+  ['Archivo Black', 'heavy wide sans'], ['Fredoka', 'rounded bold'], ['Baloo 2', 'rounded playful'], ['Lilita One', 'rounded heavy display'],
+  ['Luckiest Guy', 'bubbly cartoon caps'], ['Playfair Display', 'elegant serif'], ['Merriweather', 'sturdy serif'],
+  ['Georgia', 'classic serif'], ['Pacifico', 'brush script'], ['Lobster', 'bold script'], ['Dancing Script', 'handwriting script'],
+  ['Roboto Mono', 'monospace'],
+];
+/* CSS font-family string for a MATCH_FONTS / FONT_GROUPS display name (case-insensitive), or null. */
+export function fontCss(name) {
+  const n = String(name || '').trim().toLowerCase();
+  for (const g of FONT_GROUPS) for (const [label, css] of g.fonts) if (label.toLowerCase() === n) return css;
+  return null;
+}
 export const FONT_STYLESHEET_URL = 'https://fonts.googleapis.com/css2?' +
   GOOGLE_FONT_FAMILIES.map(f => `family=${f}:wght@400;500;600;700`).join('&') + '&display=swap';
 
@@ -42,7 +66,7 @@ const BASE = { originX: 'left', originY: 'top' };
 
 export function makeShape(fabric, tool, pt, o = {}) {
   const size = o.size || 160;
-  const fill = o.fill || '#ef6a2d';
+  const fill = o.fill || '#000000';
   const stroke = o.stroke || null;
   const strokeWidth = o.strokeWidth || 0;
   const common = { ...BASE, left: pt.x - size / 2, top: pt.y - size / 2, fill, stroke, strokeWidth };
@@ -54,7 +78,7 @@ export function makeShape(fabric, tool, pt, o = {}) {
   else if (tool === 'polygon') obj = new fabric.Polygon(starPoints(pt.x, pt.y, size / 2, size / 2, 6).filter((_, i) => i % 2 === 0), { fill, stroke, strokeWidth });
   else if (tool === 'star') obj = new fabric.Polygon(starPoints(pt.x, pt.y, size / 2, size / 4, 5), { fill, stroke, strokeWidth });
   if (!obj) return null;
-  obj.set({ id: uid(), role: 'shape', name: tool[0].toUpperCase() + tool.slice(1) });
+  obj.set({ id: uid(), role: 'shape', name: tool[0].toUpperCase() + tool.slice(1), shapeKind: tool });
   return obj;
 }
 
@@ -99,6 +123,13 @@ export function makeText(fabric, pt, o = {}) {
   return t;
 }
 
+/* A Group the layers panel should show as a folder of its members: the user's own groups
+   (groupSelection's role 'group') and role-less imported ones. Stickers (role 'shape') and ad-copy
+   (cta/badge/price/brand) are Groups internally but edit as one layer, so they stay flat. */
+export function isContainerGroup(o) {
+  return !!o && o.type === 'group' && (o.role === 'group' || !o.role);
+}
+
 /* Human name for a layer, mirroring what a layers panel wants to show. */
 export function layerLabel(o) {
   if (o.renamed && o.name) return o.name;
@@ -111,6 +142,74 @@ export function layerLabel(o) {
   if (o.role === 'cta' || o.role === 'badge' || o.role === 'price' || o.role === 'brand') return o.name || 'Layer';
   if (o.type === 'i-text' || o.type === 'text' || o.type === 'textbox') return (o.text || 'Text').slice(0, 24);
   if (o.type === 'image') return o.name || 'Image';
+  if (o.role === 'group') return o.name || 'Group';
   if (o.type === 'group') return (o._objects ? o._objects.length : '?') + ' layers';
   return o.name || o.type || 'Layer';
+}
+
+/* One-line description for a layer row's subtitle plus a `kind` a UI can pick an icon/tile from —
+   "Text: Inter Black 72pt", "Group (2 elements)", "1080×1080 Image", "Locked Solid Fill". Shared by
+   both shells' layer panels so their rows read the same. Sizes are the on-artboard (scaled) size. */
+const WEIGHT_NAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black', normal: 'Regular', bold: 'Bold' };
+const AD_ROLE_NAMES = { cta: 'CTA button', badge: 'Badge', price: 'Price tag', brand: 'Brand lockup' };
+const isTextObj = (o) => o && (o.type === 'i-text' || o.type === 'text' || o.type === 'textbox');
+/* Which shape a vector layer is, for a layers panel's icon: 'rect' | 'ellipse' | 'triangle' |
+   'line' | 'polygon' | 'star' | 'pen' | 'freehand', or null for anything else. `shapeKind` is
+   stamped at creation (makeShape / the pen tool); documents from before that are recognised by
+   their Fabric type, and star vs hexagon by makeShape's own point counts (10 vs 6). */
+function shapeKindOf(o) {
+  if (o.shapeKind) return o.shapeKind;
+  if (o.isFreehand || (o.type === 'path' && !o.fill)) return 'freehand';
+  if (o.type === 'rect') return 'rect';
+  if (o.type === 'ellipse' || o.type === 'circle') return 'ellipse';
+  if (o.type === 'triangle') return 'triangle';
+  if (o.type === 'line') return 'line';
+  if (o.type === 'polygon') { const n = (o.points || []).length; return n === 10 ? 'star' : n === 6 ? 'polygon' : 'pen'; }
+  if (o.type === 'path') return 'pen';
+  return null;
+}
+/* Short "what is this" label for a Properties footer ("Type: Vector Ellipse"). Multi-selections
+   read as "N layers". */
+const SHAPE_NAMES = { rect: 'Rectangle', ellipse: 'Ellipse', triangle: 'Triangle', polygon: 'Polygon', star: 'Star', pen: 'Path', line: 'Line', freehand: 'Freehand path' };
+export function layerTypeLabel(o) {
+  if (!o) return '';
+  if (o.type === 'activeSelection') return (o._objects || []).length + ' layers';
+  if (o.role === 'adjustment') return 'Adjustment layer';
+  if (o.role === 'bg') return o.type === 'image' ? 'Background image' : 'Background';
+  if (o.role === 'paint') return 'Paint layer';
+  if (AD_ROLE_NAMES[o.role]) return AD_ROLE_NAMES[o.role];
+  if (o.type === 'image') return 'Image';
+  if (isTextObj(o)) return 'Text';
+  if (o.type === 'group') return 'Group';
+  const shape = shapeKindOf(o);
+  if (shape === 'line' || shape === 'freehand') return SHAPE_NAMES[shape];
+  return 'Vector ' + (SHAPE_NAMES[shape] || 'Shape');
+}
+export function describeLayer(o) {
+  if (!o) return { kind: 'shape', subtitle: '' };
+  const w = Math.round(o.getScaledWidth ? o.getScaledWidth() : (o.width || 0));
+  const h = Math.round(o.getScaledHeight ? o.getScaledHeight() : (o.height || 0));
+  const dims = w && h ? `${w}×${h} ` : '';
+  const locked = o.locked ? 'Locked ' : '';
+  if (o.role === 'adjustment') return { kind: 'adjustment', subtitle: 'Adjustment layer' };
+  if (o.role === 'bg') return { kind: 'bg', subtitle: locked + (o.type === 'image' ? 'Background image' : 'Solid Fill') };
+  if (o.role === 'paint') return { kind: 'paint', subtitle: (o.maskCanvas ? 'Masked ' : '') + 'Paint layer' };
+  if (AD_ROLE_NAMES[o.role]) return { kind: 'badge', subtitle: AD_ROLE_NAMES[o.role] };
+  if (o.type === 'image') return { kind: 'image', subtitle: dims + (o.maskCanvas ? 'Masked image' : 'Image') };
+  if (isTextObj(o)) {
+    const font = String(o.fontFamily || 'Text').split(',')[0].replace(/["']/g, '').trim();
+    return { kind: 'text', subtitle: `Text: ${font} ${WEIGHT_NAMES[o.fontWeight] || o.fontWeight || 'Regular'} ${Math.round((o.fontSize || 0) * (o.scaleY || 1))}pt` };
+  }
+  if (o.type === 'group') {
+    const kids = o._objects || [], texts = kids.filter(isTextObj).length;
+    if (texts && texts < kids.length) return { kind: 'group', subtitle: 'Text & Vector Group' };
+    if (texts && texts === kids.length) return { kind: 'group', subtitle: `Text group (${kids.length})` };
+    return { kind: 'group', subtitle: `Group (${kids.length} element${kids.length === 1 ? '' : 's'})` };
+  }
+  const shape = shapeKindOf(o);
+  if (o.type === 'line') return { kind: 'shape', shape, subtitle: locked + 'Line' };
+  // An open pen path is stroke-only too, but it's a vector path, not a brush stroke.
+  if (o.shapeKind === 'pen') return { kind: 'shape', shape, subtitle: locked + (o.maskCanvas ? 'Masked ' : '') + 'Vector path' };
+  if (o.isFreehand || (o.type === 'path' && !o.fill)) return { kind: 'shape', shape, subtitle: locked + 'Freehand path' };
+  return { kind: 'shape', shape, subtitle: locked + (o.maskCanvas ? 'Masked ' : '') + 'Vector Shape' };
 }

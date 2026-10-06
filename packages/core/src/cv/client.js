@@ -111,6 +111,31 @@ export class CvEngine {
     return r ? r.polys : null;
   }
 
+  /* The foreground objects inside rough selection rings (image px) — a polygon per object.
+     `invert`: the selected area is everything EXCEPT the rings. */
+  async objects(img, polys, invert = false) {
+    const r = await this._call('objects', { img, polys, invert }, [img.data.buffer]);
+    return r ? r.polys : null;
+  }
+
+  /* Offline background removal (see the worker's cutout()): resolves { alpha: Uint8Array (W*H,
+     0-255), decon: RGBA Uint8ClampedArray | null, method: 'flat'|'grabcut', W, H, kept } or
+     { empty: true }; null if the worker isn't available. The worker keeps this image for
+     cutoutRefine() until the next cutout() / cutoutFree(). */
+  async cutout(img) {
+    const r = await this._call('cutout', { img }, [img.data.buffer]);
+    return r ? r.cut : null;
+  }
+
+  /* Keep/Remove touch-up strokes on the last cutout: [{ keep, r, pts: [{x,y}] }] in cutout px.
+     Same result shape as cutout(); null when there is no cutout to refine. */
+  async cutoutRefine(strokes) {
+    const r = await this._call('cutrefine', { strokes });
+    return r ? r.cut : null;
+  }
+
+  async cutoutFree() { await this._call('cutfree', {}); }
+
   destroy() {
     if (this._worker) { try { this._worker.terminate(); } catch (e) { } }
     this._worker = null; this._bootState = 'idle'; this._bootWait = null;
